@@ -1,7 +1,6 @@
 import React, { useState, createContext, useContext, useEffect } from 'react';
 import { Slot, useRouter, useSegments } from 'expo-router';
 import { AttendanceProvider } from '@/constants/AttendanceContext';
-import LoginScreen from '@/app/login'; 
 
 // 🌐 Your Computer's Wi-Fi IPv4 Network Portal Coordinate
 export const API_BASE_URL = 'http://192.168.1.10:5000/api';
@@ -10,7 +9,8 @@ interface AuthContextType {
   isAuthenticated: boolean;
   currentUser: any | null;
   isAdmin: boolean;
-  login: (user: any, isAdminMode: boolean) => void;
+  adminTargetRoute: 'admin' | 'adminView' | null; 
+  login: (user: any, isAdminMode: boolean, targetRoute?: 'admin' | 'adminView') => void;
   logout: () => void;
 }
 
@@ -23,7 +23,7 @@ export function useAuth() {
 }
 
 function InitialLayoutProtection() {
-  const { isAuthenticated, isAdmin } = useAuth();
+  const { isAuthenticated, isAdmin, adminTargetRoute } = useAuth();
   const segments = useSegments();
   const router = useRouter();
   const [isNavigationReady, setIsNavigationReady] = useState(false);
@@ -37,6 +37,7 @@ function InitialLayoutProtection() {
 
     const inTabsGroup = segments[0] === '(tabs)';
     const inAdminPage = segments[0] === 'admin';
+    const inAdminViewPage = segments[0] === 'adminView';
     const inLoginPage = segments[0] === 'login';
 
     if (!isAuthenticated) {
@@ -45,8 +46,10 @@ function InitialLayoutProtection() {
       }
     } else {
       if (isAdmin) {
-        if (!inAdminPage) {
-          router.replace('/admin');
+        if (adminTargetRoute === 'adminView') {
+          if (!inAdminViewPage) router.replace('/adminView');
+        } else {
+          if (!inAdminPage) router.replace('/admin');
         }
       } else {
         if (!inTabsGroup) {
@@ -54,9 +57,11 @@ function InitialLayoutProtection() {
         }
       }
     }
-  }, [isAuthenticated, isAdmin, segments, isNavigationReady]);
+  }, [isAuthenticated, isAdmin, adminTargetRoute, segments, isNavigationReady]);
 
+  // Lazy execution safely drops the require cycle warning block!
   if (!isAuthenticated) {
+    const LoginScreen = require('@/app/login').default;
     return <LoginScreen />;
   }
 
@@ -67,22 +72,25 @@ export default function RootLayout() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [currentUser, setCurrentUser] = useState<any | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [adminTargetRoute, setAdminTargetRoute] = useState<'admin' | 'adminView' | null>(null);
 
-  const login = (user: any, isAdminMode: boolean) => {
+  const login = (user: any, isAdminMode: boolean, targetRoute?: 'admin' | 'adminView') => {
     setCurrentUser(user);
     setIsAdmin(isAdminMode);
+    setAdminTargetRoute(targetRoute || (isAdminMode ? 'admin' : null));
     setIsAuthenticated(true);
   };
 
   const logout = () => {
     setCurrentUser(null);
     setIsAdmin(false);
+    setAdminTargetRoute(null);
     setIsAuthenticated(false);
   };
 
   return (
     <AttendanceProvider>
-      <AuthContext.Provider value={{ isAuthenticated, currentUser, isAdmin, login, logout }}>
+      <AuthContext.Provider value={{ isAuthenticated, currentUser, isAdmin, adminTargetRoute, login, logout }}>
         <InitialLayoutProtection />
       </AuthContext.Provider>
     </AttendanceProvider>

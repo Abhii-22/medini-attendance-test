@@ -5,5 +5,5 @@ export const OFFICE_LOCATION = {
   longitude: 77.53695,  
   
   // Set to 150 meters to perfectly cover all 2nd and 3rd-floor office areas
-  radiusInMeters: 150, 
+  radiusInMeters:150, 
 };

@@ -9,13 +9,17 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Explicitly register a global unhandled rejection interceptor to avoid thread drops
+process.on('unhandledRejection', (reason) => {
+  console.error('🛡️ Intercepted Thread Rejection:', reason);
+});
+
 // ----------------------------------------------------
 // 1. GATEWAY AUTHENTICATION ENDPOINT
 // ----------------------------------------------------
 app.post('/api/auth/login', async (req: Request, res: Response): Promise<any> => {
   const { email, password, loginMode } = req.body;
 
-  // Hardcoded Administrative Access Layer
   if (loginMode === 'ADMIN') {
     if (String(email).toLowerCase() === 'admin@medini.com' && String(password) === 'Admin@2026') {
       return res.status(200).json({ success: true, isAdmin: true, user: { name: 'System Admin', email } });
@@ -23,7 +27,6 @@ app.post('/api/auth/login', async (req: Request, res: Response): Promise<any> =>
     return res.status(401).json({ success: false, message: 'Invalid Admin security credentials.' });
   }
 
-  // Dynamic Employee Verification Layer
   try {
     const employee = await RegisteredEmployee.findOne({ email: String(email).toLowerCase() });
     if (employee && employee.password === password) {
@@ -36,10 +39,8 @@ app.post('/api/auth/login', async (req: Request, res: Response): Promise<any> =>
 });
 
 // ----------------------------------------------------
-// 2. ADMIN PORTAL DIRECTORY ACTIONS
+// 2. ADMIN PORTAL DIRECTORY ACTIONS (CRUD INTEGRATED)
 // ----------------------------------------------------
-
-// Register a brand new worker profile
 app.post('/api/admin/register-employee', async (req: Request, res: Response): Promise<any> => {
   try {
     const newEmployee = new RegisteredEmployee(req.body);
@@ -50,13 +51,58 @@ app.post('/api/admin/register-employee', async (req: Request, res: Response): Pr
   }
 });
 
-// Fetch active company registry directory
 app.get('/api/admin/employees', async (req: Request, res: Response) => {
   const list = await RegisteredEmployee.find().sort({ createdAt: -1 });
   res.status(200).json(list);
 });
 
-// Fetch attendance logs cleanly filtered by specific employee identity strings
+app.put('/api/admin/update-employee', async (req: Request, res: Response): Promise<any> => {
+  const { _id, name, designation, email, password } = req.body;
+
+  if (!_id) {
+    return res.status(400).json({ success: false, message: "Missing document reference identifier." });
+  }
+
+  try {
+    const updatedEmployee = await RegisteredEmployee.findByIdAndUpdate(
+      _id,
+      {
+        name: name.trim(),
+        designation: designation.trim(),
+        email: email.trim().toLowerCase(),
+        password: password
+      },
+      { new: true }
+    );
+
+    if (!updatedEmployee) {
+      return res.status(404).json({ success: false, message: "Target workspace record could not be found." });
+    }
+
+    return res.status(200).json({ success: true, employee: updatedEmployee });
+  } catch (err: any) {
+    return res.status(400).json({ success: false, message: "Email assignment already in active use.", error: err });
+  }
+});
+
+app.delete('/api/admin/delete-employee/:id', async (req: Request, res: Response): Promise<any> => {
+  const targetMongoId = req.params.id;
+
+  try {
+    const employeeRecord = await RegisteredEmployee.findById(targetMongoId);
+    if (!employeeRecord) {
+      return res.status(404).json({ success: false, message: "Profile record not active in registry directory." });
+    }
+
+    await AttendanceShiftLog.deleteMany({ employeeIdReference: employeeRecord.employeeId });
+    await RegisteredEmployee.findByIdAndDelete(targetMongoId);
+
+    return res.status(200).json({ success: true, message: "Profile data and chronological logs purged cleanly." });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: "Failed to isolate cluster document targets.", error: err });
+  }
+});
+
 app.get('/api/admin/attendance-sheet', async (req: Request, res: Response) => {
   const employeeName = req.query.employeeName ? String(req.query.employeeName) : 'ALL';
   const filter = employeeName !== 'ALL' ? { employeeName } : {};
@@ -74,13 +120,11 @@ app.get('/api/admin/download-attendance', async (req: Request, res: Response) =>
   
   const records = await AttendanceShiftLog.find(filter).sort({ createdAt: -1 });
   
-  // Assemble structural spreadsheet columns
   let csvData = "Employee Name,Employee ID,Date,Day of Week,Login Time,Logout Time\n";
   records.forEach(row => {
     csvData += `"${row.employeeName}","${row.employeeIdReference}","${row.date}","${row.dayOfWeek}","${row.loginTime}","${row.logoutTime}"\n`;
   });
 
-  // Force systems to execute an immediate file download
   const timestamp = new Date().toISOString().split('T')[0];
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', `attachment; filename=Employee_Attendance_Report_${timestamp}.csv`);
@@ -88,10 +132,10 @@ app.get('/api/admin/download-attendance', async (req: Request, res: Response) =>
 });
 
 // ----------------------------------------------------
-// 4. MOBILE CLIENT SHIFT PUNCH EVENTS (WITH ABSENT SUPPORT)
+// 4. MOBILE CLIENT SHIFT PUNCH EVENTS (WITH DUAL PHOTO SLOTS)
 // ----------------------------------------------------
 app.post('/api/attendance/punch-clock', async (req: Request, res: Response): Promise<any> => {
-  const { employeeId, name, type } = req.body;
+  const { employeeId, name, type, photoUri } = req.body; 
   
   const now = new Date();
   const formattedDate = now.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
@@ -101,11 +145,12 @@ app.post('/api/attendance/punch-clock', async (req: Request, res: Response): Pro
   try {
     let dayLog = await AttendanceShiftLog.findOne({ employeeIdReference: String(employeeId), date: formattedDate });
 
-    // Handle full-day Absence designation override
     if (type === 'ABSENT') {
       if (dayLog) {
         dayLog.loginTime = 'ABSENT';
         dayLog.logoutTime = 'ABSENT';
+        dayLog.set('capturedPhotoInUri', ''); 
+        dayLog.set('capturedPhotoOutUri', ''); 
         await dayLog.save();
       } else {
         dayLog = new AttendanceShiftLog({
@@ -114,17 +159,23 @@ app.post('/api/attendance/punch-clock', async (req: Request, res: Response): Pro
           date: formattedDate,
           dayOfWeek: formattedDay,
           loginTime: 'ABSENT',
-          logoutTime: 'ABSENT'
+          logoutTime: 'ABSENT',
+          capturedPhotoInUri: '',
+          capturedPhotoOutUri: ''
         });
         await dayLog.save();
       }
       return res.status(200).json({ success: true, data: dayLog });
     }
 
-    // Standard In/Out Clock Management
     if (dayLog) {
-      if (type === 'LOGIN') dayLog.loginTime = formattedTime;
-      else dayLog.logoutTime = formattedTime;
+      if (type === 'LOGIN') {
+        dayLog.loginTime = formattedTime;
+        if (photoUri) dayLog.set('capturedPhotoInUri', photoUri); 
+      } else {
+        dayLog.logoutTime = formattedTime;
+        if (photoUri) dayLog.set('capturedPhotoOutUri', photoUri); // Targets out field securely
+      }
       await dayLog.save();
     } else {
       dayLog = new AttendanceShiftLog({
@@ -133,7 +184,9 @@ app.post('/api/attendance/punch-clock', async (req: Request, res: Response): Pro
         date: formattedDate,
         dayOfWeek: formattedDay,
         loginTime: type === 'LOGIN' ? formattedTime : '--:--',
-        logoutTime: type === 'LOGOUT' ? formattedTime : '--:--'
+        logoutTime: type === 'LOGOUT' ? formattedTime : '--:--',
+        capturedPhotoInUri: type === 'LOGIN' ? (photoUri || '') : '',
+        capturedPhotoOutUri: type === 'LOGOUT' ? (photoUri || '') : ''
       });
       await dayLog.save();
     }
@@ -144,7 +197,7 @@ app.post('/api/attendance/punch-clock', async (req: Request, res: Response): Pro
 });
 
 // ----------------------------------------------------
-// 5. EMPLOYEE PROFILE UPDATE PORTAL
+// 5. EMPLOYEE PROFILE UPDATE PORTAL (READ-ONLY GATEWAY LINK)
 // ----------------------------------------------------
 app.patch('/api/employee/update-profile', async (req: Request, res: Response): Promise<any> => {
   const { employeeId, name, designation, email } = req.body;
@@ -154,7 +207,6 @@ app.patch('/api/employee/update-profile', async (req: Request, res: Response): P
   }
 
   try {
-    // Finds worker by their unchangeable unique ID string and updates fields
     const updatedEmployee = await RegisteredEmployee.findOneAndUpdate(
       { employeeId: String(employeeId).toUpperCase() },
       { 
@@ -162,7 +214,7 @@ app.patch('/api/employee/update-profile', async (req: Request, res: Response): P
         designation: designation.trim(), 
         email: email.trim().toLowerCase() 
       },
-      { new: true } // Returns the brand new edited document from the cloud database
+      { new: true }
     );
 
     if (!updatedEmployee) {
@@ -180,9 +232,19 @@ app.patch('/api/employee/update-profile', async (req: Request, res: Response): P
 // ----------------------------------------------------
 const ATLAST_MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/employeeAttendanceSystem';
 
-mongoose.connect(ATLAST_MONGO_URI)
-  .then(() => {
+async function bootServerEngine() {
+  try {
+    console.log('Connecting to cloud cluster... ⏳');
+    await mongoose.connect(ATLAST_MONGO_URI);
     console.log('Attendance System Cloud Database Connected 🌐📜');
-    app.listen(5000, () => console.log('Attendance Server Live On Port 5000 🚀'));
-  })
-  .catch(err => console.error('Database connection error:', err));
+    
+    app.listen(5000, () => {
+      console.log('Attendance Server Live On Port 5000 🚀');
+    });
+  } catch (err) {
+    console.error('❌ Critical Server Initialization Failure:', err);
+    process.exit(1);
+  }
+}
+
+bootServerEngine();

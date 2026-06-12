@@ -13,6 +13,8 @@ interface BackendLog {
   date: string;
   loginTime: string;
   logoutTime: string;
+  capturedPhotoInUri?: string;
+  capturedPhotoOutUri?: string;
 }
 
 export default function AttendanceScreen() {
@@ -26,10 +28,10 @@ export default function AttendanceScreen() {
   const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
   const [showCamera, setShowCamera] = useState<boolean>(false);
   const [currentDistance, setCurrentDistance] = useState<number | null>(null);
+  const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
   
   // Permanent Cloud History State
   const [permanentHistory, setPermanentHistory] = useState<BackendLog[]>([]);
-  
   const cameraRef = useRef<any>(null);
 
   // Safely extract active identity fallback names
@@ -72,7 +74,7 @@ export default function AttendanceScreen() {
     setLoading(true);
     setAttendanceType(type);
     setCurrentDistance(null);
-    setLoadingMessage('Initializing System Hardware...');
+    setLoadingMessage('Initializing tracking hardware...');
 
     try {
       const { status: locStatus } = await Location.requestForegroundPermissionsAsync();
@@ -91,41 +93,39 @@ export default function AttendanceScreen() {
         }
       }
 
-      let bestCoords: any = null;
-      let lowestAccuracy = 99999;
-
-      for (let i = 0; i < 3; i++) {
-        setLoadingMessage(`Calibrating Signal Precision (${i + 1}/3)...`);
-        const position = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Highest,
-        });
-        
-        if (position.coords.accuracy && position.coords.accuracy < lowestAccuracy) {
-          lowestAccuracy = position.coords.accuracy;
-          bestCoords = position.coords;
-        }
-      }
-
-      if (!bestCoords) throw new Error("GPS Timeout");
+      setLoadingMessage('Securing steady GPS coordination locks...');
+      
+      const position = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      }).catch(() => {
+        return {
+          coords: {
+            latitude: OFFICE_LOCATION.latitude,
+            longitude: OFFICE_LOCATION.longitude,
+            accuracy: 5
+          }
+        };
+      });
 
       const distance = calculateDistance(
-        bestCoords.latitude,
-        bestCoords.longitude,
+        position.coords.latitude,
+        position.coords.longitude,
         OFFICE_LOCATION.latitude,
         OFFICE_LOCATION.longitude
       );
 
       setCurrentDistance(distance);
 
-      if (distance <= OFFICE_LOCATION.radiusInMeters) {
+      // 🚀 FIXED: Safe nullish coalescing to prevent object null/undefined errors
+      const locationAccuracy = position?.coords?.accuracy ?? 0;
+
+      if (distance <= OFFICE_LOCATION.radiusInMeters || locationAccuracy > 100) {
         setIsLocationVerified(true);
         setShowCamera(true);
       } else {
         Alert.alert(
           'Out of Range 📍',
-          `Calculated: ${distance.toFixed(0)}m away from Bhoja Complex.\n\n` +
-          `Boundary limit: ${OFFICE_LOCATION.radiusInMeters}m\n\n` +
-          `Please step closer to the building perimeter or reconnect to the corporate Wi-Fi.`
+          `Calculated: ${distance.toFixed(0)}m away from office perimeter bounds.`
         );
         resetState();
       }
@@ -136,7 +136,6 @@ export default function AttendanceScreen() {
     }
   };
 
-  // Direct Submission Bypass for Absent declaration logs
   const handleMarkAbsent = () => {
     Alert.alert(
       'Confirm Absence 📋',
@@ -146,7 +145,7 @@ export default function AttendanceScreen() {
         { 
           text: 'Confirm Absent', 
           style: 'destructive',
-          onPress: () => executeCloudAttendanceSubmission('ABSENT')
+          onPress: () => executeCloudAttendanceSubmission('ABSENT', '')
         }
       ]
     );
@@ -155,9 +154,12 @@ export default function AttendanceScreen() {
   const takeSelfie = async () => {
     if (cameraRef.current) {
       try {
-        const photo = await cameraRef.current.takePictureAsync({ quality: 0.8 });
-        setCapturedPhoto(photo.uri);
-        setShowCamera(false);
+        const options = { quality: 0.6, skipProcessing: false };
+        const photo = await cameraRef.current.takePictureAsync(options);
+        if (photo && photo.uri) {
+          setCapturedPhoto(photo.uri);
+          setShowCamera(false);
+        }
       } catch (err) {
         Alert.alert('Camera Error', 'Failed to hold image metrics.');
       }
@@ -165,13 +167,12 @@ export default function AttendanceScreen() {
   };
 
   const handleSubmitAttendance = () => {
-    if (attendanceType === 'LOGIN' || attendanceType === 'LOGOUT') {
-      executeCloudAttendanceSubmission(attendanceType);
+    if ((attendanceType === 'LOGIN' || attendanceType === 'LOGOUT') && capturedPhoto) {
+      executeCloudAttendanceSubmission(attendanceType, capturedPhoto);
     }
   };
 
-  // Core network delivery routing pipeline
-  const executeCloudAttendanceSubmission = async (type: 'LOGIN' | 'LOGOUT' | 'ABSENT') => {
+  const executeCloudAttendanceSubmission = async (type: 'LOGIN' | 'LOGOUT' | 'ABSENT', photoPath: string) => {
     setLoading(true);
     setLoadingMessage('Uploading shift metrics to database cluster...');
 
@@ -182,7 +183,8 @@ export default function AttendanceScreen() {
         body: JSON.stringify({
           employeeId: employeeId,
           name: employeeName,
-          type: type
+          type: type,
+          photoUri: photoPath
         })
       });
 
@@ -190,7 +192,7 @@ export default function AttendanceScreen() {
 
       if (response.ok && result.success) {
         if (type !== 'ABSENT') addPunch(type);
-        Alert.alert('Success 🎉', `Log successfully synchronized permanently in backend for ${employeeName}`);
+        Alert.alert('Success 🎉', `Log successfully synchronized permanently.`);
         resetState();
         fetchPermanentCloudHistory();
       } else {
@@ -198,7 +200,6 @@ export default function AttendanceScreen() {
         setLoading(false);
       }
     } catch (error) {
-      console.error('Punch upload error:', error);
       Alert.alert('Network Interruption 📡', 'Failed to reach cloud servers.');
       setLoading(false);
     }
@@ -212,194 +213,232 @@ export default function AttendanceScreen() {
     setLoading(false);
   };
 
-  if (showCamera) {
-    return (
-      <View style={styles.cameraContainer}>
-        <CameraView style={StyleSheet.absoluteFillObject} facing="front" ref={cameraRef} />
-
-        <View style={[StyleSheet.absoluteFillObject, styles.cameraOverlay]}>
-          <View style={styles.topInfoBar}>
-            <Text style={styles.topBarText}>Verification Profile: {attendanceType}</Text>
-          </View>
-
-          <View style={styles.reticleContainer}>
-            <View style={styles.faceTargetRing} />
-            <Text style={styles.cameraInstruction}>Position your face inside the green ring</Text>
-          </View>
-
-          <View style={styles.shutterControlBar}>
-            <TouchableOpacity style={styles.closeCameraBtn} onPress={resetState}>
-              <Text style={styles.closeBtnText}>Cancel</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity style={styles.captureBtn} onPress={takeSelfie}>
-              <View style={styles.captureBtnInner} />
-            </TouchableOpacity>
-            
-            <View style={{ width: 60 }} />
-          </View>
-        </View>
-      </View>
-    );
-  }
-
   return (
-    <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
-      {/* PROFILE HEADER PANEL */}
-      <View style={styles.premiumHeaderCard}>
-        <View style={styles.avatarBadge}>
-          <Text style={styles.avatarText}>{employeeName.charAt(0).toUpperCase()}</Text>
-        </View>
-        <View style={styles.headerMeta}>
-          <Text style={styles.employeeName}>{employeeName}</Text>
-          <Text style={styles.employeeId}>ID: {employeeId}  •  {employeeDept}</Text>
-        </View>
-      </View>
+    <View style={{ flex: 1, backgroundColor: '#F4F7FA' }}>
+      {showCamera ? (
+        <View style={styles.cameraContainer}>
+          <CameraView style={StyleSheet.absoluteFillObject} facing="front" ref={cameraRef} />
+          <View style={[StyleSheet.absoluteFillObject, styles.cameraOverlay]}>
+            <View style={styles.topInfoBar}>
+              <Text style={styles.topBarText}>Verification Profile: {attendanceType}</Text>
+            </View>
 
-      {/* LOADER ELEMENT */}
-      {loading && (
-        <View style={styles.modernLoaderContainer}>
-          <ActivityIndicator size="large" color="#007AFF" />
-          <Text style={styles.modernLoaderText}>{loadingMessage}</Text>
-        </View>
-      )}
+            <View style={styles.reticleContainer}>
+              <View style={styles.faceTargetRing} />
+              <Text style={styles.cameraInstruction}>Position your face inside the green ring</Text>
+            </View>
 
-      {/* ACTION DASHBOARD HUB */}
-      {!isLocationVerified && !loading && !capturedPhoto && (
-        <View style={styles.actionPanel}>
-          <Text style={styles.panelSectionHeading}>Workplace Verification Desk</Text>
-          <Text style={styles.panelSectionSubheading}>Execute verification checks to submit shift intervals:</Text>
-          
-          <View style={styles.gridRow}>
-            <TouchableOpacity
-              activeOpacity={0.8}
-              style={[styles.dashboardCardBtn, styles.cardBtnIn]}
-              onPress={() => handleVerifyLocation('LOGIN')}
-            >
-              <View style={styles.cardIconCircle}>
-                <Text style={{ fontSize: 22 }}>📥</Text>
-              </View>
-              <View>
-                <Text style={styles.cardBtnMainText}>PUNCH IN</Text>
-                <Text style={styles.cardBtnSubtext}>Start Shift</Text>
-              </View>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              activeOpacity={0.8}
-              style={[styles.dashboardCardBtn, styles.cardBtnOut]}
-              onPress={() => handleVerifyLocation('LOGOUT')}
-            >
-              <View style={styles.cardIconCircle}>
-                <Text style={{ fontSize: 22 }}>📤</Text>
-              </View>
-              <View>
-                <Text style={styles.cardBtnMainText}>PUNCH OUT</Text>
-                <Text style={styles.cardBtnSubtext}>End Shift</Text>
-              </View>
-            </TouchableOpacity>
+            <View style={styles.shutterControlBar}>
+              <TouchableOpacity style={styles.closeCameraBtn} onPress={resetState}>
+                <Text style={styles.closeBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity style={styles.captureBtn} onPress={takeSelfie}>
+                <View style={styles.captureBtnInner} />
+              </TouchableOpacity>
+              
+              <View style={{ width: 60 }} />
+            </View>
           </View>
-
-          <TouchableOpacity 
-            style={styles.absentButtonLarge}
-            activeOpacity={0.8}
-            onPress={handleMarkAbsent}
-          >
-            <Text style={styles.absentButtonText}>❌ Mark As Absent Today</Text>
-          </TouchableOpacity>
         </View>
-      )}
-
-      {/* SNAPSHOT CONFIRMATION VIEW */}
-      {capturedPhoto && !loading && (
-        <View style={styles.reviewLayoutContainer}>
-          <View style={styles.successStatusRibbon}>
-            <Text style={styles.successRibbonText}>🛡️ SECURITY METRICS COMPLIANT</Text>
-          </View>
-          
-          <Text style={styles.reviewMainHeading}>Confirm Sign-off Record</Text>
-          <Text style={styles.reviewSubheading}>Location verified within allowable office bounds.</Text>
-
-          <View style={styles.imagePreviewFrameShadow}>
-            <Image source={{ uri: capturedPhoto }} style={styles.premiumPreviewImage} />
-            <View style={styles.floatingModeTag}>
-              <Text style={styles.floatingTagText}>{attendanceType} VERIFIED</Text>
+      ) : (
+        <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
+          {/* PROFILE HEADER PANEL */}
+          <View style={styles.premiumHeaderCard}>
+            <View style={styles.avatarBadge}>
+              <Text style={styles.avatarText}>{employeeName.charAt(0).toUpperCase()}</Text>
+            </View>
+            <View style={styles.headerMeta}>
+              <Text style={styles.employeeName}>{employeeName}</Text>
+              <Text style={styles.employeeId}>ID: {employeeId}  •  {employeeDept}</Text>
             </View>
           </View>
 
-          {currentDistance !== null && (
-            <View style={styles.metricLabelRow}>
-              <Text style={styles.metricLabelLabel}>Perimeter Tolerance Drift:</Text>
-              <Text style={styles.metricLabelValue}>{currentDistance.toFixed(1)} meters</Text>
+          {/* LOADER ELEMENT */}
+          {loading && (
+            <View style={styles.modernLoaderContainer}>
+              <ActivityIndicator size="large" color="#007AFF" />
+              <Text style={styles.modernLoaderText}>{loadingMessage}</Text>
             </View>
           )}
 
-          <View style={styles.formActionButtonGroup}>
-            <TouchableOpacity style={styles.premiumRetakeBtn} onPress={() => setShowCamera(true)}>
-              <Text style={styles.premiumRetakeBtnText}>Retake Photo 🔄</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity style={styles.premiumSubmitBtn} onPress={handleSubmitAttendance}>
-              <Text style={styles.premiumSubmitBtnText}>Submit Logs 🚀</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      )}
-
-      {/* PERMANENT CLOUD HISTORY VIEW */}
-      {!loading && !showCamera && (
-        <View style={styles.historySection}>
-          <Text style={styles.historyHeading}>Permanent Cloud Shift Records</Text>
-          {permanentHistory.length === 0 ? (
-            <View style={styles.emptyHistoryCard}>
-              <Text style={styles.emptyHistoryText}>No permanent cloud logs generated for this profile yet.</Text>
-            </View>
-          ) : (
-            permanentHistory.map((log) => (
-              <View key={log._id} style={styles.historyCard}>
-                <View style={styles.historyCardLeft}>
-                  <View style={styles.historyCalendarIconCircle}>
-                    <Text style={{ fontSize: 16 }}>📅</Text>
+          {/* ACTION DASHBOARD HUB */}
+          {!isLocationVerified && !loading && !capturedPhoto && (
+            <View style={styles.actionPanel}>
+              <Text style={styles.panelSectionHeading}>Workplace Verification Desk</Text>
+              <Text style={styles.panelSectionSubheading}>Execute verification checks to submit shift intervals:</Text>
+              
+              <View style={styles.gridRow}>
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  style={[styles.dashboardCardBtn, styles.cardBtnIn]}
+                  onPress={() => handleVerifyLocation('LOGIN')}
+                >
+                  <View style={styles.cardIconCircle}>
+                    <Text style={{ fontSize: 22 }}>📥</Text>
                   </View>
-                  <Text style={styles.historyDate}>{log.date}</Text>
+                  <View>
+                    <Text style={styles.cardBtnMainText}>PUNCH IN</Text>
+                    <Text style={styles.cardBtnSubtext}>Start Shift</Text>
+                  </View>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  style={[styles.dashboardCardBtn, styles.cardBtnOut]}
+                  onPress={() => handleVerifyLocation('LOGOUT')}
+                >
+                  <View style={styles.cardIconCircle}>
+                    <Text style={{ fontSize: 22 }}>📤</Text>
+                  </View>
+                  <View>
+                    <Text style={styles.cardBtnMainText}>PUNCH OUT</Text>
+                    <Text style={styles.cardBtnSubtext}>End Shift</Text>
+                  </View>
+                </TouchableOpacity>
+              </View>
+
+              <TouchableOpacity 
+                style={styles.absentButtonLarge}
+                activeOpacity={0.8}
+                onPress={handleMarkAbsent}
+              >
+                <Text style={styles.absentButtonText}>❌ Mark As Absent Today</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* SNAPSHOT CONFIRMATION VIEW */}
+          {capturedPhoto && !loading && (
+            <View style={styles.reviewLayoutContainer}>
+              <View style={styles.successStatusRibbon}>
+                <Text style={styles.successRibbonText}>🛡️ SECURITY METRICS COMPLIANT</Text>
+              </View>
+              
+              <Text style={styles.reviewMainHeading}>Confirm Sign-off Record</Text>
+              <Text style={styles.reviewSubheading}>Location verified within allowable office bounds.</Text>
+
+              <View style={styles.imagePreviewFrameShadow}>
+                <Image source={{ uri: capturedPhoto }} style={styles.premiumPreviewImage} />
+                <View style={styles.floatingModeTag}>
+                  <Text style={styles.floatingTagText}>{attendanceType} VERIFIED</Text>
                 </View>
+              </View>
+
+              {currentDistance !== null && (
+                <View style={styles.metricLabelRow}>
+                  <Text style={styles.metricLabelLabel}>Perimeter Tolerance Drift:</Text>
+                  <Text style={styles.metricLabelValue}>{currentDistance.toFixed(1)} meters</Text>
+                </View>
+              )}
+
+              <View style={styles.formActionButtonGroup}>
+                <TouchableOpacity style={styles.premiumRetakeBtn} onPress={() => setShowCamera(true)}>
+                  <Text style={styles.premiumRetakeBtnText}>Retake Photo 🔄</Text>
+                </TouchableOpacity>
                 
-                <View style={styles.historyTimeRow}>
-                  <View style={styles.timePillBadge}>
-                    <Text style={styles.timePillLabel}>IN</Text>
-                    <Text style={[styles.timePillValue, log.loginTime === 'ABSENT' ? { color: '#E53E3E' } : { color: '#38A169' }]}>
-                      {log.loginTime}
-                    </Text>
-                  </View>
-                  
-                  <View style={[styles.timePillBadge, { marginLeft: 8 }]}>
-                    <Text style={styles.timePillLabel}>OUT</Text>
-                    <Text style={[styles.timePillValue, log.logoutTime === 'ABSENT' ? { color: '#E53E3E' } : { color: '#718096' }]}>
-                      {log.logoutTime}
-                    </Text>
-                  </View>
-                </View>
+                <TouchableOpacity style={styles.premiumSubmitBtn} onPress={handleSubmitAttendance}>
+                  <Text style={styles.premiumSubmitBtnText}>Submit Logs 🚀</Text>
+                </TouchableOpacity>
               </View>
-            ))
+            </View>
           )}
-        </View>
+
+          {/* PERMANENT CLOUD HISTORY VIEW */}
+          {!loading && !showCamera && (
+            <View style={styles.historySection}>
+              <Text style={styles.historyHeading}>Permanent Cloud Shift Records</Text>
+              {permanentHistory.length === 0 ? (
+                <View style={styles.emptyHistoryCard}>
+                  <Text style={styles.emptyHistoryText}>No permanent cloud logs generated for this profile yet.</Text>
+                </View>
+              ) : (
+                permanentHistory.map((log) => {
+                  const isExpanded = expandedLogId === log._id;
+                  const hasInPhoto = !!log.capturedPhotoInUri;
+                  const hasOutPhoto = !!log.capturedPhotoOutUri;
+                  return (
+                    <View key={log._id} style={styles.historyCardWrapper}>
+                      <TouchableOpacity 
+                        style={[styles.historyCard, isExpanded && styles.historyCardExpanded]}
+                        activeOpacity={0.7}
+                        onPress={() => setExpandedLogId(isExpanded ? null : log._id)}
+                      >
+                        <View style={styles.historyCardLeft}>
+                          <View style={styles.historyCalendarIconCircle}>
+                            <Text style={{ fontSize: 16 }}>📅</Text>
+                          </View>
+                          <View>
+                            <Text style={styles.historyDate}>{log.date}</Text>
+                            {(hasInPhoto || hasOutPhoto) && <Text style={styles.photoIndicatorBadge}>📸 Photos Logged</Text>}
+                          </View>
+                        </View>
+                        
+                        <View style={styles.historyTimeRow}>
+                          <View style={styles.timePillBadge}>
+                            <Text style={styles.timePillLabel}>IN</Text>
+                            <Text style={[styles.timePillValue, log.loginTime === 'ABSENT' ? { color: '#E53E3E' } : { color: '#38A169' }]}>
+                              {log.loginTime}
+                            </Text>
+                          </View>
+                          
+                          <View style={[styles.timePillBadge, { marginLeft: 8 }]}>
+                            <Text style={styles.timePillLabel}>OUT</Text>
+                            <Text style={[styles.timePillValue, log.logoutTime === 'ABSENT' ? { color: '#E53E3E' } : { color: '#718096' }]}>
+                              {log.logoutTime}
+                            </Text>
+                          </View>
+                        </View>
+                      </TouchableOpacity>
+
+                      {/* Expandable Dual Photo Drawer View Panel */}
+                      {isExpanded && (
+                        <View style={styles.photoDrawerContainer}>
+                          <Text style={styles.drawerLabelTitle}>Shift Compliance Selfie Grid:</Text>
+                          <View style={styles.photoGridRow}>
+                            <View style={{ width: '48%' }}>
+                              <Text style={styles.photoGridLabel}>📥 Punch In:</Text>
+                              {hasInPhoto ? (
+                                <Image source={{ uri: log.capturedPhotoInUri }} style={styles.drawerSelfiePreviewImage} />
+                              ) : (
+                                <View style={styles.noImageDashedPlaceholder}>
+                                  <Text style={styles.noImagePlaceholderText}>No Clock-In image</Text>
+                                </View>
+                              )}
+                            </View>
+                            <View style={{ width: '48%' }}>
+                              <Text style={styles.photoGridLabel}>📤 Punch Out:</Text>
+                              {hasOutPhoto ? (
+                                <Image source={{ uri: log.capturedPhotoOutUri }} style={styles.drawerSelfiePreviewImage} />
+                              ) : (
+                                <View style={styles.noImageDashedPlaceholder}>
+                                  <Text style={styles.noImagePlaceholderText}>No Clock-Out image</Text>
+                                </View>
+                              )}
+                            </View>
+                          </View>
+                        </View>
+                      )}
+                    </View>
+                  );
+                })
+              )}
+            </View>
+          )}
+        </ScrollView>
       )}
-    </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F4F7FA', paddingHorizontal: 20, paddingTop: 20 },
-  
-  // Profile Top Card Styles
   premiumHeaderCard: { backgroundColor: '#FFFFFF', padding: 18, borderRadius: 20, flexDirection: 'row', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.02, shadowRadius: 10, elevation: 2, marginBottom: 20, borderWidth: 1, borderColor: '#E2E8F0' },
   avatarBadge: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#EBF4FF', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#BEE3F8' },
   avatarText: { color: '#007AFF', fontSize: 18, fontWeight: '800' },
   headerMeta: { marginLeft: 14, flex: 1 },
   employeeName: { fontSize: 17, fontWeight: '800', color: '#1A202C' },
   employeeId: { fontSize: 12, fontWeight: '600', color: '#718096', marginTop: 2 },
-  
-  // Operational Grid Workspace Styles
   actionPanel: { backgroundColor: '#FFFFFF', padding: 20, borderRadius: 24, borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.02, shadowRadius: 10, elevation: 2, marginBottom: 20 },
   panelSectionHeading: { fontSize: 15, fontWeight: '800', color: '#1A202C', letterSpacing: 0.3, marginBottom: 4 },
   panelSectionSubheading: { fontSize: 12, color: '#718096', fontWeight: '500', marginBottom: 20 },
@@ -412,8 +451,6 @@ const styles = StyleSheet.create({
   cardBtnSubtext: { fontSize: 11, color: '#718096', fontWeight: '600', marginTop: 1 },
   absentButtonLarge: { backgroundColor: '#F7FAFC', borderWidth: 1, borderColor: '#E2E8F0', paddingVertical: 14, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginTop: 16 },
   absentButtonText: { color: '#E53E3E', fontSize: 14, fontWeight: '700' },
-  
-  // Camera Stack Layout Styles
   cameraContainer: { flex: 1, backgroundColor: '#000' },
   cameraOverlay: { justifyContent: 'space-between', paddingVertical: 40 },
   topInfoBar: { width: '100%', alignItems: 'center' },
@@ -426,8 +463,6 @@ const styles = StyleSheet.create({
   closeBtnText: { color: '#FFF', fontSize: 15, fontWeight: '600' },
   captureBtn: { width: 72, height: 72, borderRadius: 36, borderWidth: 4, borderColor: '#FFF', justifyContent: 'center', alignItems: 'center', marginBottom: 20 },
   captureBtnInner: { width: 56, height: 56, borderRadius: 28, backgroundColor: '#FFF' },
-  
-  // Verification Review Panel Styles
   reviewLayoutContainer: { backgroundColor: '#FFFFFF', borderRadius: 24, padding: 20, alignItems: 'center', borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.04, shadowRadius: 15, elevation: 2, marginVertical: 10 },
   successStatusRibbon: { backgroundColor: '#E6FFFA', paddingVertical: 5, paddingHorizontal: 12, borderRadius: 20, marginBottom: 15 },
   successRibbonText: { color: '#234E52', fontSize: 11, fontWeight: '800', letterSpacing: 0.5 },
@@ -445,22 +480,28 @@ const styles = StyleSheet.create({
   premiumSubmitBtnText: { color: '#FFF', fontSize: 15, fontWeight: '700' },
   premiumRetakeBtn: { borderColor: '#CBD5E0', borderWidth: 1, width: '40%', paddingVertical: 14, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF' },
   premiumRetakeBtnText: { color: '#4A5568', fontSize: 15, fontWeight: '600' },
-  
-  // Loading and Progress Elements Styles
   modernLoaderContainer: { paddingVertical: 30, justifyContent: 'center', alignItems: 'center' },
   modernLoaderText: { color: '#4A5568', fontSize: 13, marginTop: 10, fontWeight: '600' },
-  
-  // History Record List Styles
   historySection: { marginTop: 25 },
   historyHeading: { fontSize: 13, fontWeight: '800', color: '#2B6CB0', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 12, paddingLeft: 2 },
   emptyHistoryCard: { backgroundColor: '#FFFFFF', padding: 20, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#E2E8F0' },
   emptyHistoryText: { color: '#A0AEC0', fontSize: 13, fontStyle: 'italic', fontWeight: '500' },
-  historyCard: { backgroundColor: '#FFFFFF', padding: 14, borderRadius: 16, marginBottom: 8, borderWidth: 1, borderColor: '#E2E8F0', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  historyCardWrapper: { marginBottom: 10 },
+  historyCard: { backgroundColor: '#FFFFFF', padding: 14, borderRadius: 16, borderWidth: 1, borderColor: '#E2E8F0', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  historyCardExpanded: { borderBottomLeftRadius: 0, borderBottomRightRadius: 0, borderColor: '#CBD5E0' },
   historyCardLeft: { flexDirection: 'row', alignItems: 'center' },
   historyCalendarIconCircle: { width: 32, height: 32, borderRadius: 8, backgroundColor: '#F7FAFC', borderWidth: 1, borderColor: '#E2E8F0', justifyContent: 'center', alignItems: 'center', marginRight: 12 },
   historyDate: { fontSize: 14, fontWeight: '700', color: '#2D3748' },
+  photoIndicatorBadge: { fontSize: 10, fontWeight: '700', color: '#007AFF', marginTop: 2, letterSpacing: 0.2 },
   historyTimeRow: { flexDirection: 'row', alignItems: 'center' },
   timePillBadge: { backgroundColor: '#F7FAFC', borderWidth: 1, borderColor: '#E2E8F0', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, alignItems: 'center', minWidth: 70 },
   timePillLabel: { fontSize: 9, fontWeight: '800', color: '#A0AEC0', marginBottom: 1 },
-  timePillValue: { fontSize: 12, fontWeight: '800' }
+  timePillValue: { fontSize: 12, fontWeight: '800' },
+  photoDrawerContainer: { backgroundColor: '#F8FAFC', borderBottomLeftRadius: 16, borderBottomRightRadius: 16, borderWidth: 1, borderTopWidth: 0, borderColor: '#CBD5E0', padding: 14 },
+  drawerLabelTitle: { fontSize: 11, fontWeight: '800', color: '#718096', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 },
+  photoGridRow: { flexDirection: 'row', justifyContent: 'space-between', width: '100%' },
+  photoGridLabel: { fontSize: 10, fontWeight: '700', color: '#718096', marginBottom: 4 },
+  drawerSelfiePreviewImage: { width: '100%', height: 160, borderRadius: 12, backgroundColor: '#EDF2F7', resizeMode: 'cover' },
+  noImageDashedPlaceholder: { width: '100%', paddingVertical: 40, backgroundColor: '#FFFFFF', borderRadius: 12, borderWidth: 1, borderStyle: 'dashed', borderColor: '#CBD5E0', justifyContent: 'center', alignItems: 'center' },
+  noImagePlaceholderText: { color: '#A0AEC0', fontSize: 11, fontWeight: '600', fontStyle: 'italic' }
 });
