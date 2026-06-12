@@ -1,15 +1,21 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, ScrollView, Image, ActivityIndicator, Dimensions } from 'react-native';
-import { useRouter } from 'expo-router';
-import { useAuth, API_BASE_URL } from './_layout'; 
+import { StyleSheet, Text, View, ScrollView, TouchableOpacity, ActivityIndicator, Image } from 'react-native';
+import { useAuth, API_BASE_URL } from './_layout';
 
-const { width } = Dimensions.get('window');
+interface EmployeeProfile {
+  _id: string;
+  name: string;
+  employeeId: string;
+  designation: string;
+  email: string;
+  role?: string;
+}
 
-interface AttendanceLog {
+interface AttendanceRecord {
   _id: string;
   employeeIdReference: string;
   employeeName: string;
-  date: string;
+  date: string; // Expected format standard: "June 12, 2026" or "July 1, 2026"
   dayOfWeek: string;
   loginTime: string;
   logoutTime: string;
@@ -17,255 +23,348 @@ interface AttendanceLog {
   capturedPhotoOutUri?: string;
 }
 
-interface EmployeeStats {
-  name: string;
-  id: string;
-  presentDays: number;
-  absentDays: number;
-}
-
 export default function AdminViewScreen() {
-  const router = useRouter();
-  const { logout } = useAuth(); 
-  
-  const [allLogs, setAllLogs] = useState<AttendanceLog[]>([]);
-  const [displayedLogs, setDisplayedLogs] = useState<AttendanceLog[]>([]);
-  const [employeeStatsList, setEmployeeStatsList] = useState<EmployeeStats[]>([]);
-  const [selectedFilter, setSelectedFilter] = useState<string>('ALL');
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [totalEmployeesCount, setTotalEmployeesCount] = useState<number>(0);
+  const { logout, currentUser } = useAuth();
 
-  const fetchTotalEmployeesHeadcount = async () => {
+  const [selectedEmpFilter, setSelectedEmpFilter] = useState<string>('ALL');
+  
+  // 🗓️ MONTH FILTER SELECTOR STATE (Defaults to current active month)
+  const currentMonthName = new Date().toLocaleDateString('en-US', { month: 'long' }); // e.g. "June"
+  const [selectedMonthFilter, setSelectedMonthFilter] = useState<string>(currentMonthName);
+  
+  const [employees, setEmployees] = useState<EmployeeProfile[]>([]);
+  const [attendanceLogs, setAttendanceLogs] = useState<AttendanceRecord[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [expandedLogId, setExpandedLogId] = useState<string | null>(null); 
+
+  // List of standard months for rendering the calendar selection sub-menu
+  const availableMonths = [
+    'January', 'February', 'March', 'April', 'May', 'June', 
+    'July', 'August', 'September', 'October', 'November', 'December'
+  ];
+
+  // 🔍 COMPILING RECORDS FILTERED BY ACCOUNT IDENTITY AND SELECTED TARGET MONTH
+  const getFilteredLogs = () => {
+    return attendanceLogs.filter((log) => {
+      // Check if the log date string contains the selected month name (e.g., "June 12, 2026" contains "June")
+      const matchesMonth = log.date && log.date.toLowerCase().includes(selectedMonthFilter.toLowerCase());
+      return matchesMonth;
+    });
+  };
+
+  const filteredLogs = getFilteredLogs();
+
+  // 📊 CALCULATE PRESENT/ABSENT TALLIES SPECIFICALLY FOR THE ACTIVE SELECTED MONTH
+  const getAttendanceMetrics = () => {
+    let presentCount = 0;
+    let absentCount = 0;
+
+    filteredLogs.forEach((log) => {
+      if (log.loginTime === 'ABSENT' || log.logoutTime === 'ABSENT') {
+        absentCount++;
+      } else if (log.loginTime !== '--:--') {
+        presentCount++;
+      }
+    });
+
+    return { presentCount, absentCount };
+  };
+
+  const { presentCount, absentCount } = getAttendanceMetrics();
+
+  const fetchEmployeesList = async () => {
     try {
       const response = await fetch(`${API_BASE_URL}/admin/employees`);
       if (response.ok) {
         const data = await response.json();
-        setTotalEmployeesCount(data.length);
+        setEmployees(data);
       }
     } catch (error) {
-      console.error('Error fetching global employee headcounts:', error);
+      console.error('Failed fetching employees registry:', error);
     }
   };
 
-  const syncLiveLogsDesk = async () => {
+  const fetchAttendanceLogs = async (filterName: string) => {
     try {
       setIsLoading(true);
-      await fetchTotalEmployeesHeadcount();
-      
-      const response = await fetch(`${API_BASE_URL}/admin/attendance-sheet?employeeName=ALL`);
+      const response = await fetch(`${API_BASE_URL}/admin/attendance-sheet?employeeName=${filterName}`);
       if (response.ok) {
-        const data: AttendanceLog[] = await response.json();
-        setAllLogs(data);
-        setDisplayedLogs(data);
-        calculateMetricsAggregate(data);
+        const data = await response.json();
+        setAttendanceLogs(data);
       }
     } catch (error) {
-      console.error('Error syncing logs to view board:', error);
+      console.error('Error fetching logs stream:', error);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const calculateMetricsAggregate = (logs: AttendanceLog[]) => {
-    const statsMap: { [key: string]: EmployeeStats } = {};
-
-    logs.forEach((log) => {
-      const key = log.employeeName;
-      if (!statsMap[key]) {
-        statsMap[key] = {
-          name: log.employeeName,
-          id: log.employeeIdReference || 'N/A',
-          presentDays: 0,
-          absentDays: 0,
-        };
-      }
-
-      if (log.loginTime === 'ABSENT' || log.logoutTime === 'ABSENT') {
-        statsMap[key].absentDays += 1;
-      } else if (log.loginTime !== '--:--') {
-        statsMap[key].presentDays += 1;
-      }
-    });
-
-    setEmployeeStatsList(Object.values(statsMap));
-  };
-
   useEffect(() => {
-    syncLiveLogsDesk();
+    fetchEmployeesList();
   }, []);
 
-  const handleApplyFilter = (name: string) => {
-    setSelectedFilter(name);
-    if (name === 'ALL') {
-      setDisplayedLogs(allLogs);
-    } else {
-      setDisplayedLogs(allLogs.filter(log => log.employeeName === name));
-    }
+  useEffect(() => {
+    fetchAttendanceLogs(selectedEmpFilter);
+    setExpandedLogId(null); 
+  }, [selectedEmpFilter]);
+
+  useEffect(() => {
+    setExpandedLogId(null); // Close any expanded photo drawers when changing months
+  }, [selectedMonthFilter]);
+
+  const handleToggleLogDrawer = (id: string) => {
+    setExpandedLogId(expandedLogId === id ? null : id);
   };
 
   return (
     <View style={styles.container}>
+      
+      {/* SUPERVISOR DASHBOARD BANNER */}
       <View style={styles.headerHeroCard}>
         <View style={styles.headerInfoBlock}>
-          <Text style={styles.headerSubtitle}>READ-ONLY SYSTEM DIRECTORY</Text>
-          <Text style={styles.headerTitle}>Live Inspection Desk</Text>
+          <Text style={styles.headerSubtitle}>ADMINISTRATIVE INSPECTION VIEW</Text>
+          <Text style={styles.headerTitle}>Welcome, {currentUser?.name || 'Supervisor'}</Text>
         </View>
-        <TouchableOpacity style={styles.refreshBadgeBtn} activeOpacity={0.7} onPress={syncLiveLogsDesk}>
-          <Text style={styles.refreshBtnText}>Sync Hub 🔄</Text>
+        <TouchableOpacity style={styles.exitBadgeBtn} activeOpacity={0.7} onPress={() => logout()}>
+          <Text style={styles.exitBtnText}>Sign Out 🚪</Text>
         </TouchableOpacity>
       </View>
 
+      {/* 📊 UPDATED METRICS OVERVIEW CARD ROWS (CALCULATES CURRENT SELECTION ONLY) */}
+      <Text style={styles.sectionHeadingLabel}>
+        {selectedEmpFilter === 'ALL' 
+          ? `🌐 Global Analytics (${selectedMonthFilter})` 
+          : `👤 ${selectedEmpFilter} Summary (${selectedMonthFilter})`
+        }
+      </Text>
       <View style={styles.summaryGridContainer}>
-        {selectedFilter === 'ALL' ? (
-          <View style={[styles.statBoxSummary, { borderLeftColor: '#007AFF', width: '100%' }]}>
-            <Text style={styles.statBoxNumber}>{totalEmployeesCount}</Text>
-            <Text style={styles.statBoxLabel}>Total Employees Registered</Text>
-          </View>
-        ) : (
-          employeeStatsList.filter(e => e.name === selectedFilter).map((stat) => (
-            <React.Fragment key={stat.id}>
-              <View style={[styles.statBoxSummary, { borderLeftColor: '#38A169', width: '48%' }]}>
-                <Text style={styles.statBoxNumber}>{stat.presentDays}</Text>
-                <Text style={styles.statBoxLabel}>Days Present ({stat.name})</Text>
-              </View>
-              <View style={[styles.statBoxSummary, { borderLeftColor: '#E53E3E', width: '48%' }]}>
-                <Text style={styles.statBoxNumber}>{stat.absentDays}</Text>
-                <Text style={styles.statBoxLabel}>Days Absent ({stat.name})</Text>
-              </View>
-            </React.Fragment>
-          ))
-        )}
+        <View style={[styles.statBoxSummary, { borderLeftColor: '#007AFF' }]}>
+          <Text style={styles.statBoxNumber}>
+            {selectedEmpFilter === 'ALL' ? employees.filter(e => e.role !== 'ADMIN_VIEW').length : '1'}
+          </Text>
+          <Text style={styles.statBoxLabel}>
+            {selectedEmpFilter === 'ALL' ? 'Staff Members' : 'Active Profile'}
+          </Text>
+        </View>
+        
+        <View style={[styles.statBoxSummary, { borderLeftColor: '#38A169' }]}>
+          <Text style={[styles.statBoxNumber, { color: '#2F855A' }]}>{presentCount}</Text>
+          <Text style={styles.statBoxLabel}>Days Present</Text>
+        </View>
+
+        <View style={[styles.statBoxSummary, { borderLeftColor: '#E53E3E' }]}>
+          <Text style={[styles.statBoxNumber, { color: '#C53030' }]}>{absentCount}</Text>
+          <Text style={styles.statBoxLabel}>Days Absent</Text>
+        </View>
       </View>
 
-      <Text style={styles.sectionHeadingLabel}>Isolate Workforce Logs</Text>
+      {/* FILTER COHORT HORIZONTAL CAROUSEL */}
+      <Text style={styles.sectionHeadingLabel}>Workforce Filter Focal Point</Text>
       <View style={styles.pillScrollFrame}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <TouchableOpacity style={[styles.filterPill, selectedFilter === 'ALL' && styles.activeFilterPill]} onPress={() => handleApplyFilter('ALL')}>
-            <Text style={[styles.filterPillText, selectedFilter === 'ALL' && styles.activeFilterPillText]}>🌐 All Workers</Text>
+          <TouchableOpacity style={[styles.filterPill, selectedEmpFilter === 'ALL' && styles.activeFilterPill]} onPress={() => setSelectedEmpFilter('ALL')}>
+            <Text style={[styles.filterPillText, selectedEmpFilter === 'ALL' && styles.activeFilterPillText]}>🌐 Global Workforce</Text>
           </TouchableOpacity>
-          {employeeStatsList.map((emp) => (
-            <TouchableOpacity key={emp.id} style={[styles.filterPill, selectedFilter === emp.name && styles.activeFilterPill]} onPress={() => handleApplyFilter(emp.name)}>
-              <Text style={[styles.filterPillText, selectedFilter === emp.name && styles.activeFilterPillText]}>👤 {emp.name}</Text>
+          {employees.filter(e => e.role !== 'ADMIN_VIEW').map((emp) => (
+            <TouchableOpacity key={emp._id} style={[styles.filterPill, selectedEmpFilter === emp.name && styles.activeFilterPill]} onPress={() => setSelectedEmpFilter(emp.name)}>
+              <Text style={[styles.filterPillText, selectedEmpFilter === emp.name && styles.activeFilterPillText]}>👤 {emp.name}</Text>
             </TouchableOpacity>
           ))}
         </ScrollView>
       </View>
 
-      <Text style={styles.sectionHeadingLabel}>Security Verification Stream</Text>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 20 }}>
-        {isLoading ? (
-          <View style={styles.loaderCenterFrame}>
-            <ActivityIndicator size="large" color="#007AFF" />
-            <Text style={styles.loaderLabelSub}>Compiling cloud attendance registries...</Text>
-          </View>
-        ) : displayedLogs.length === 0 ? (
-          <View style={styles.emptyCardFrame}><Text style={styles.emptyTextMessage}>No log vectors discovered.</Text></View>
-        ) : (
-          displayedLogs.map((log) => {
-            const isFullAbsence = log.loginTime === 'ABSENT' || log.logoutTime === 'ABSENT';
+      {/* 🗓️ CALENDAR MONTH SELECTION TAB STRIP BLOCK */}
+      <Text style={styles.sectionHeadingLabel}>Select Active Tracking Month</Text>
+      <View style={[styles.pillScrollFrame, { marginBottom: 14 }]}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          {availableMonths.map((month) => (
+            <TouchableOpacity 
+              key={month} 
+              style={[styles.monthFilterPill, selectedMonthFilter === month && styles.activeMonthFilterPill]} 
+              onPress={() => setSelectedMonthFilter(month)}
+            >
+              <Text style={[styles.monthFilterPillText, selectedMonthFilter === month && styles.activeMonthFilterPillText]}>
+                📅 {month}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+
+      {/* EXPANDABLE CHRONOLOGICAL LOG FEED CONTAINER */}
+      <Text style={styles.sectionHeadingLabel}>{selectedMonthFilter} Month Verification Stream</Text>
+      
+      {isLoading ? (
+        <View style={styles.loaderCenterFrame}>
+          <ActivityIndicator size="large" color="#007AFF" />
+          <Text style={styles.loaderLabelSub}>Compiling shift logs framework...</Text>
+        </View>
+      ) : filteredLogs.length === 0 ? (
+        <View style={styles.emptyCardFrame}>
+          <Text style={styles.emptyTextMessage}>No log items recorded inside {selectedMonthFilter}.</Text>
+        </View>
+      ) : (
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
+          {filteredLogs.map((logItem) => {
+            const isExpanded = expandedLogId === logItem._id;
+            const hasInPhoto = !!logItem.capturedPhotoInUri;
+            const hasOutPhoto = !!logItem.capturedPhotoOutUri;
+            const isAbsent = logItem.loginTime === 'ABSENT' || logItem.logoutTime === 'ABSENT';
+
             return (
-              <View key={log._id} style={[styles.logInspectionCard, isFullAbsence && styles.logInspectionCardAbsent]}>
-                <View style={styles.cardTopHeaderRow}>
-                  <View style={styles.headerInfoMetaLeft}>
-                    <Text style={styles.cardEmpNameText}>{log.employeeName}</Text>
-                    <Text style={styles.cardEmpIdText}>Reference ID: {log.employeeIdReference}</Text>
+              <View key={logItem._id} style={styles.dayGroupCardWrapper}>
+                
+                {/* INTERACTIVE TAP CARD SURFACE */}
+                <TouchableOpacity
+                  activeOpacity={0.75}
+                  style={[
+                    styles.dataLogCard, 
+                    isExpanded && styles.dataLogCardExpanded,
+                    isAbsent && styles.dataLogCardAbsent
+                  ]}
+                  onPress={() => !isAbsent && handleToggleLogDrawer(logItem._id)}
+                >
+                  <View style={styles.logCardHeader}>
+                    <View>
+                      <Text style={styles.logEmployeeIdentity}>{logItem.employeeName}</Text>
+                      <Text style={styles.logEmployeeIdSub}>ID reference: {logItem.employeeIdReference}</Text>
+                    </View>
+                    
+                    <View style={{ alignItems: 'flex-end' }}>
+                      <View style={[styles.dateBadge, isAbsent && { backgroundColor: '#FED7D7', borderColor: '#FEB2B2' }]}>
+                        <Text style={[styles.dateBadgeText, isAbsent && { color: '#9B2C2C' }]}>{logItem.date}</Text>
+                      </View>
+                      {(hasInPhoto || hasOutPhoto) && !isAbsent && (
+                        <View style={styles.photoLoggedBadge}>
+                          <Text style={styles.photoLoggedBadgeText}>📸 Photos Ready</Text>
+                        </View>
+                      )}
+                    </View>
                   </View>
-                  <View style={[styles.dateLabelBadge, isFullAbsence && { backgroundColor: '#FED7D7' }]}>
-                    <Text style={[styles.dateBadgeText, isFullAbsence && { color: '#9B2C2C' }]}>{log.date}</Text>
+                  
+                  <View style={styles.punchMetricsRow}>
+                    <View style={[styles.metricBox, isAbsent && { borderColor: '#FEB2B2', backgroundColor: '#FFF5F5' }]}>
+                      <Text style={styles.metricLabel}>PUNCH IN</Text>
+                      <Text style={[styles.metricTime, isAbsent ? { color: '#E53E3E' } : { color: '#2F855A' }]}>
+                        {logItem.loginTime}
+                      </Text>
+                    </View>
+                    <View style={[styles.metricBox, isAbsent && { borderColor: '#FEB2B2', backgroundColor: '#FFF5F5' }]}>
+                      <Text style={styles.metricLabel}>PUNCH OUT</Text>
+                      <Text style={[styles.metricTime, isAbsent ? { color: '#E53E3E' } : { color: '#4A5568' }]}>
+                        {logItem.logoutTime}
+                      </Text>
+                    </View>
                   </View>
-                </View>
 
-                <View style={styles.timeDetailsRow}>
-                  <View style={[styles.timeBoxPill, isFullAbsence ? styles.absentBorderBlock : styles.presentBorderInBlock]}>
-                    <Text style={styles.timeBoxLabel}>PUNCH IN</Text>
-                    <Text style={[styles.timeBoxValue, isFullAbsence ? { color: '#E53E3E' } : { color: '#2F855A' }]}>{log.loginTime}</Text>
-                  </View>
-                  <View style={[styles.timeBoxPill, isFullAbsence ? styles.absentBorderBlock : styles.presentBorderOutBlock]}>
-                    <Text style={styles.timeBoxLabel}>PUNCH OUT</Text>
-                    <Text style={[styles.timeBoxValue, isFullAbsence ? { color: '#E53E3E' } : { color: '#4A5568' }]}>{log.logoutTime}</Text>
-                  </View>
-                </View>
+                  {(hasInPhoto || hasOutPhoto) && !isExpanded && !isAbsent && (
+                    <Text style={styles.expandTipText}>Tap card to inspect compliance captures ▼</Text>
+                  )}
+                </TouchableOpacity>
 
-                {/* 🚀 Render both photos side by side for Admin Audit reviews */}
-                {!isFullAbsence && (
-                  <View style={styles.photoVerificationSection}>
-                    <Text style={styles.photoSectionLabel}>📸 Dual Biometric Compliance Record Images:</Text>
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                      <View style={{ width: '49%' }}>
-                        <Text style={styles.photoPaneMiniTitle}>📥 In Snapshot:</Text>
-                        {log.capturedPhotoInUri ? (
-                          <Image source={{ uri: log.capturedPhotoInUri }} style={styles.adminVerificationImage} />
+                {/* SLIDE DOWN PHOTO VERIFICATION DRAWER */}
+                {isExpanded && !isAbsent && (
+                  <View style={styles.photoDrawerContainer}>
+                    <Text style={styles.drawerLabelTitle}>Biometric Verification Snapshots:</Text>
+                    <View style={styles.photoGridRow}>
+                      
+                      {/* Punch In Photo Component */}
+                      <View style={styles.photoBlock}>
+                        <Text style={styles.photoGridLabel}>📥 Punch In Capture:</Text>
+                        {hasInPhoto ? (
+                          <Image source={{ uri: logItem.capturedPhotoInUri }} style={styles.drawerSelfiePreviewImage} />
                         ) : (
-                          <View style={styles.noPhotoPlaceholderBox}><Text style={styles.noPhotoPlaceholderText}>No image</Text></View>
+                          <View style={styles.noImageDashedPlaceholder}>
+                            <Text style={styles.noImagePlaceholderText}>No Punch In Photo</Text>
+                          </View>
                         )}
                       </View>
-                      <View style={{ width: '49%' }}>
-                        <Text style={styles.photoPaneMiniTitle}>📤 Out Snapshot:</Text>
-                        {log.capturedPhotoOutUri ? (
-                          <Image source={{ uri: log.capturedPhotoOutUri }} style={styles.adminVerificationImage} />
+
+                      {/* Punch Out Photo Component */}
+                      <View style={styles.photoBlock}>
+                        <Text style={styles.photoGridLabel}>📤 Punch Out Capture:</Text>
+                        {hasOutPhoto ? (
+                          <Image source={{ uri: logItem.capturedPhotoOutUri }} style={styles.drawerSelfiePreviewImage} />
                         ) : (
-                          <View style={styles.noPhotoPlaceholderBox}><Text style={styles.noPhotoPlaceholderText}>No image</Text></View>
+                          <View style={styles.noImageDashedPlaceholder}>
+                            <Text style={styles.noImagePlaceholderText}>No Punch Out Photo</Text>
+                          </View>
                         )}
                       </View>
+
                     </View>
                   </View>
                 )}
+
               </View>
             );
-          })
-        )}
-      </ScrollView>
-
-      <TouchableOpacity style={styles.floatingCloseBtn} activeOpacity={0.85} onPress={() => logout()}>
-        <Text style={styles.floatingCloseBtnText}>Exit Monitor & Sign Out 🚪</Text>
-      </TouchableOpacity>
+          })}
+        </ScrollView>
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F4F7FA', paddingHorizontal: 16, paddingTop: 50 },
+  
   headerHeroCard: { backgroundColor: '#1A202C', padding: 20, borderRadius: 24, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
   headerInfoBlock: { flex: 1 },
   headerSubtitle: { color: '#A0AEC0', fontSize: 10, fontWeight: '800', letterSpacing: 0.8 },
-  headerTitle: { color: '#FFFFFF', fontSize: 22, fontWeight: '800', marginTop: 2 },
-  refreshBadgeBtn: { backgroundColor: '#2D3748', borderWidth: 1, borderColor: '#4A5568', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 12 },
-  refreshBtnText: { color: '#E2E8F0', fontSize: 12, fontWeight: '700' },
-  summaryGridContainer: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginBottom: 20 },
-  statBoxSummary: { borderRadius: 18, padding: 14, borderWidth: 1, backgroundColor: '#FFFFFF', borderColor: '#E2E8F0', borderLeftWidth: 5 },
-  statBoxNumber: { fontSize: 24, fontWeight: '800', color: '#1A202C' },
-  statBoxLabel: { fontSize: 11, fontWeight: '700', color: '#718096', marginTop: 3 },
-  sectionHeadingLabel: { fontSize: 12, fontWeight: '800', color: '#2B6CB0', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 10, paddingLeft: 2 },
-  pillScrollFrame: { maxHeight: 44, marginBottom: 18 },
+  headerTitle: { color: '#FFFFFF', fontSize: 20, fontWeight: '800', marginTop: 2 },
+  exitBadgeBtn: { backgroundColor: '#4A5568', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 12 },
+  exitBtnText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' },
+  
+  sectionHeadingLabel: { fontSize: 11, fontWeight: '800', color: '#2B6CB0', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 8, marginTop: 4, paddingLeft: 2 },
+  
+  // Analytics Counters
+  summaryGridContainer: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginBottom: 14 },
+  statBoxSummary: { width: '31.5%', borderRadius: 16, padding: 12, borderWidth: 1, backgroundColor: '#FFFFFF', borderColor: '#E2E8F0', borderLeftWidth: 4 },
+  statBoxNumber: { fontSize: 19, fontWeight: '800', color: '#1A202C' },
+  statBoxLabel: { fontSize: 9, fontWeight: '700', color: '#718096', marginTop: 3 },
+
+  pillScrollFrame: { maxHeight: 44, marginBottom: 12 },
   filterPill: { backgroundColor: '#E2E8F0', paddingHorizontal: 14, justifyContent: 'center', alignItems: 'center', borderRadius: 14, marginRight: 6, height: 36, borderWidth: 1, borderColor: '#CBD5E0' },
   activeFilterPill: { backgroundColor: '#007AFF', borderColor: '#007AFF' },
   filterPillText: { fontSize: 12, color: '#4A5568', fontWeight: '700' },
   activeFilterPillText: { color: '#FFFFFF' },
-  logInspectionCard: { backgroundColor: '#FFFFFF', borderRadius: 20, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: '#E2E8F0' },
-  logInspectionCardAbsent: { backgroundColor: '#FFF5F5', borderColor: '#FED7D7' },
-  cardTopHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#EDF2F7', paddingBottom: 10, marginBottom: 12 },
-  headerInfoMetaLeft: { flex: 1 },
-  cardEmpNameText: { fontSize: 16, fontWeight: '800', color: '#1A202C' },
-  cardEmpIdText: { fontSize: 11, color: '#A0AEC0', fontWeight: '600', marginTop: 1 },
-  dateLabelBadge: { backgroundColor: '#F7FAFC', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 10, borderWidth: 1, borderColor: '#E2E8F0' },
+
+  // 🗓️ Month Selector Custom Styles
+  monthFilterPill: { backgroundColor: '#EDF2F7', paddingHorizontal: 14, justifyContent: 'center', alignItems: 'center', borderRadius: 14, marginRight: 6, height: 36, borderWidth: 1, borderColor: '#E2E8F0' },
+  activeMonthFilterPill: { backgroundColor: '#805AD5', borderColor: '#805AD5' },
+  monthFilterPillText: { fontSize: 12, color: '#4A5568', fontWeight: '700' },
+  activeMonthFilterPillText: { color: '#FFFFFF' },
+  
+  dayGroupCardWrapper: { marginBottom: 12 },
+  dataLogCard: { backgroundColor: '#FFFFFF', padding: 16, borderRadius: 20, borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.01, shadowRadius: 5 },
+  dataLogCardExpanded: { borderBottomLeftRadius: 0, borderBottomRightRadius: 0, borderBottomWidth: 0, borderColor: '#CBD5E0' },
+  dataLogCardAbsent: { backgroundColor: '#FFF5F5', borderColor: '#FED7D7' },
+  
+  logCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', borderBottomWidth: 1, borderBottomColor: '#EDF2F7', paddingBottom: 10, marginBottom: 12 },
+  logEmployeeIdentity: { fontSize: 15, fontWeight: '800', color: '#2D3748' },
+  logEmployeeIdSub: { fontSize: 11, fontWeight: '600', color: '#A0AEC0', marginTop: 1 },
+  dateBadge: { backgroundColor: '#F7FAFC', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 10, borderWidth: 1, borderColor: '#E2E8F0' },
   dateBadgeText: { fontSize: 11, color: '#4A5568', fontWeight: '700' },
-  timeDetailsRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
-  timeBoxPill: { width: '49%', padding: 10, borderRadius: 12, borderWidth: 1, backgroundColor: '#F7FAFC', alignItems: 'center' },
-  presentBorderInBlock: { borderColor: '#C6F6D5', backgroundColor: '#F6FDF9' },
-  presentBorderOutBlock: { borderColor: '#E2E8F0' },
-  absentBorderBlock: { borderColor: '#FEB2B2', backgroundColor: '#FFF5F5' },
-  timeBoxLabel: { fontSize: 9, fontWeight: '800', color: '#A0AEC0', marginBottom: 2 },
-  timeBoxValue: { fontSize: 14, fontWeight: '800' },
-  photoVerificationSection: { marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#EDF2F7' },
-  photoSectionLabel: { fontSize: 11, fontWeight: '700', color: '#718096', marginBottom: 8 },
-  photoPaneMiniTitle: { fontSize: 10, fontWeight: '700', color: '#718096', marginBottom: 4 },
-  adminVerificationImage: { width: '100%', height: 140, borderRadius: 14, backgroundColor: '#EDF2F7', resizeMode: 'cover' },
-  noPhotoPlaceholderBox: { width: '100%', height: 140, backgroundColor: '#F7FAFC', borderRadius: 12, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderStyle: 'dashed', borderColor: '#CBD5E0' },
-  noPhotoPlaceholderText: { color: '#A0AEC0', fontSize: 11, fontWeight: '600', textAlign: 'center' },
-  loaderCenterFrame: { paddingVertical: 40, alignItems: 'center', justifyContent: 'center' },
+  photoLoggedBadge: { backgroundColor: '#EBF8FF', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, borderWidth: 1, borderColor: '#BEE3F8', marginTop: 4, alignSelf: 'flex-end' },
+  photoLoggedBadgeText: { color: '#2B6CB0', fontSize: 9, fontWeight: '700' },
+  
+  punchMetricsRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  metricBox: { flex: 1, backgroundColor: '#F7FAFC', padding: 10, borderRadius: 12, alignItems: 'center', marginHorizontal: 2, borderWidth: 1, borderColor: '#E2E8F0' },
+  metricLabel: { fontSize: 9, fontWeight: '800', color: '#A0AEC0', marginBottom: 2 },
+  metricTime: { fontSize: 13, fontWeight: '800' },
+  expandTipText: { fontSize: 10, color: '#A0AEC0', fontWeight: '600', textAlign: 'center', marginTop: 10, letterSpacing: 0.1 },
+  
+  photoDrawerContainer: { backgroundColor: '#F8FAFC', borderBottomLeftRadius: 20, borderBottomRightRadius: 20, borderWidth: 1, borderColor: '#CBD5E0', padding: 14 },
+  drawerLabelTitle: { fontSize: 11, fontWeight: '800', color: '#4A5568', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 10 },
+  photoGridRow: { flexDirection: 'row', justifyContent: 'space-between', width: '100%' },
+  photoBlock: { width: '48%' },
+  photoGridLabel: { fontSize: 10, fontWeight: '700', color: '#718096', marginBottom: 4 },
+  drawerSelfiePreviewImage: { width: '100%', height: 140, borderRadius: 12, backgroundColor: '#EDF2F7', resizeMode: 'cover' },
+  noImageDashedPlaceholder: { width: '100%', height: 140, backgroundColor: '#FFFFFF', borderRadius: 12, borderWidth: 1, borderStyle: 'dashed', borderColor: '#CBD5E0', justifyContent: 'center', alignItems: 'center' },
+  noImagePlaceholderText: { color: '#A0AEC0', fontSize: 11, fontWeight: '600', fontStyle: 'italic' },
+  
+  loaderCenterFrame: { paddingVertical: 50, alignItems: 'center', justifyContent: 'center' },
   loaderLabelSub: { color: '#718096', fontSize: 13, fontWeight: '600', marginTop: 12 },
   emptyCardFrame: { backgroundColor: '#FFFFFF', padding: 30, borderRadius: 20, alignItems: 'center', borderWidth: 1, borderColor: '#E2E8F0' },
-  emptyTextMessage: { color: '#A0AEC0', fontSize: 13, fontStyle: 'italic', fontWeight: '600' },
-  floatingCloseBtn: { backgroundColor: '#E53E3E', paddingVertical: 16, borderRadius: 16, alignItems: 'center', justifyContent: 'center', marginTop: 10, marginBottom: 20 },
-  floatingCloseBtnText: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' }
+  emptyTextMessage: { color: '#A0AEC0', fontSize: 13, fontStyle: 'italic', fontWeight: '600', textAlign: 'center' }
 });

@@ -1,39 +1,41 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, ScrollView, RefreshControl } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, ScrollView, RefreshControl, Dimensions } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth, API_BASE_URL } from '../_layout';
+import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
+
+const { width } = Dimensions.get('window');
 
 export default function HomeScreen() {
   const router = useRouter();
   const { currentUser } = useAuth();
   
-  // Dashboard analytic metric counters states
   const [presentCount, setPresentCount] = useState<number>(0);
   const [absentCount, setAbsentCount] = useState<number>(0);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [todayPunch, setTodayPunch] = useState({ in: '--:--', out: '--:--' });
 
-  // Fallback structural definitions for profile safety
+  const currentMonthName = new Date().toLocaleDateString('en-US', { month: 'long' });
+
   const employeeName = currentUser?.name || 'Employee';
   const employeeRole = currentUser?.designation || 'Staff Member';
   const employeeId = currentUser?.employeeId || 'N/A';
 
   const getGreetingSegmentText = () => {
     const hr = new Date().getHours();
-    if (hr < 12) return 'Good Morning 🌅';
-    if (hr < 17) return 'Good Afternoon ☀️';
-    return 'Good Evening 🌙';
+    if (hr < 12) return 'Good Morning';
+    if (hr < 17) return 'Good Afternoon';
+    return 'Good Evening';
   };
 
   const getTodayDateString = () => {
     return new Date().toLocaleDateString('en-US', { 
-      weekday: 'short', 
+      weekday: 'long', 
       month: 'short', 
       day: 'numeric' 
     });
   };
 
-  // Sync dashboard analytical widgets with database storage telemetry
   const syncDashboardMetricsData = async () => {
     if (!currentUser?.name) return;
     try {
@@ -41,22 +43,24 @@ export default function HomeScreen() {
       if (response.ok) {
         const logs = await response.json();
         
-        // 📊 Calculate accurate Present vs Absent totals from permanent records
         let totalPresents = 0;
         let totalAbsents = 0;
 
         logs.forEach((log: any) => {
-          if (log.loginTime === 'ABSENT' || log.logoutTime === 'ABSENT') {
-            totalAbsents += 1;
-          } else if (log.loginTime !== '--:--') {
-            totalPresents += 1;
+          const matchesCurrentMonth = log.date && log.date.toLowerCase().includes(currentMonthName.toLowerCase());
+          
+          if (matchesCurrentMonth) {
+            if (log.loginTime === 'ABSENT' || log.logoutTime === 'ABSENT') {
+              totalAbsents += 1;
+            } else if (log.loginTime !== '--:--') {
+              totalPresents += 1;
+            }
           }
         });
 
         setPresentCount(totalPresents);
         setAbsentCount(totalAbsents);
 
-        // Extract today's punch data metrics if they exist
         const todayStr = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
         const match = logs.find((log: any) => log.date === todayStr);
         if (match) {
@@ -80,7 +84,6 @@ export default function HomeScreen() {
     syncDashboardMetricsData();
   }, [currentUser]);
 
-  // Calculate percentage dynamically based on shifts
   const totalLogs = presentCount + absentCount;
   const ratio = totalLogs > 0 ? Math.round((presentCount / totalLogs) * 100) : 0;
 
@@ -88,7 +91,7 @@ export default function HomeScreen() {
     <ScrollView 
       style={styles.container} 
       showsVerticalScrollIndicator={false}
-      contentContainerStyle={{ paddingBottom: 30 }}
+      contentContainerStyle={{ paddingBottom: 40 }}
       refreshControl={
         <RefreshControl 
           refreshing={isRefreshing} 
@@ -98,12 +101,12 @@ export default function HomeScreen() {
         />
       }
     >
-      {/* 🟦 TOP LEVEL EXECUTIVE HERO BANNER */}
+      {/* 🟦 HEADER HERO CARD */}
       <View style={styles.dashboardHeroCard}>
         <View style={styles.heroHeaderRow}>
-          <View>
+          <View style={styles.heroTextGroup}>
             <Text style={styles.heroTimeLabel}>{getGreetingSegmentText()}</Text>
-            <Text style={styles.heroNameHeading}>{employeeName}</Text>
+            <Text style={styles.heroNameHeading} numberOfLines={1}>{employeeName}</Text>
             <Text style={styles.heroRoleTag}>{employeeRole}</Text>
           </View>
           <View style={styles.heroAvatarBadge}>
@@ -114,24 +117,36 @@ export default function HomeScreen() {
         <View style={styles.heroDividerLine} />
 
         <View style={styles.heroFooterRow}>
-          <Text style={styles.heroIdBadgeText}>ID: {employeeId}</Text>
+          <View style={styles.metaBadgeItem}>
+            <Ionicons name="id-card-outline" size={14} color="#B3D7FF" />
+            <Text style={styles.heroIdBadgeText}>ID: {employeeId}</Text>
+          </View>
           <View style={styles.dateBadgePill}>
-            <Text style={styles.dateBadgePillText}>🗓️ {getTodayDateString()}</Text>
+            <Ionicons name="calendar-outline" size={13} color="#FFFFFF" style={{ marginRight: 4 }} />
+            <Text style={styles.dateBadgePillText}>{getTodayDateString()}</Text>
           </View>
         </View>
       </View>
 
-      {/* 📊 GRID METRICS HUB CONTAINER */}
-      <Text style={styles.sectionHeadingLabel}>Performance Key Metrics</Text>
+      {/* 📊 GRID METRICS HUB */}
+      <View style={styles.sectionHeaderRow}>
+        <Ionicons name="analytics" size={16} color="#2B6CB0" />
+        <Text style={styles.sectionHeadingLabel}>Performance Metrics ({currentMonthName})</Text>
+      </View>
+      
       <View style={styles.metricsGridRow}>
-        <View style={[styles.metricCardBox, { borderLeftWidth: 5, borderLeftColor: '#38A169' }]}>
-          <Text style={styles.metricCardEmoji}>✅</Text>
+        <View style={[styles.metricCardBox, { borderLeftColor: '#38A169' }]}>
+          <View style={[styles.iconContainer, { backgroundColor: '#E6F4EA' }]}>
+            <Ionicons name="checkmark-circle" size={20} color="#38A169" />
+          </View>
           <Text style={styles.metricCardCountValue}>{presentCount}</Text>
           <Text style={styles.metricCardSublabel}>Days Present</Text>
         </View>
 
-        <View style={[styles.metricCardBox, { borderLeftWidth: 5, borderLeftColor: '#E53E3E' }]}>
-          <Text style={styles.metricCardEmoji}>❌</Text>
+        <View style={[styles.metricCardBox, { borderLeftColor: '#E53E3E' }]}>
+          <View style={[styles.iconContainer, { backgroundColor: '#FCE8E6' }]}>
+            <Ionicons name="close-circle" size={20} color="#E53E3E" />
+          </View>
           <Text style={styles.metricCardCountValue}>{absentCount}</Text>
           <Text style={styles.metricCardSublabel}>Days Absent</Text>
         </View>
@@ -139,22 +154,31 @@ export default function HomeScreen() {
 
       {/* EFFICIENCY RATIO PANEL */}
       <View style={styles.ratioCard}>
-        <Text style={styles.ratioLabel}>Total Duty Engagement Ratio</Text>
+        <View style={styles.ratioLeftFrame}>
+          <View style={[styles.iconContainer, { backgroundColor: '#EBF8FF', marginRight: 12 }]}>
+            <MaterialCommunityIcons name="speedometer" size={20} color="#007AFF" />
+          </View>
+          <Text style={styles.ratioLabel}>Monthly Duty Engagement</Text>
+        </View>
         <Text style={[styles.ratioValue, ratio > 75 ? { color: '#38A169' } : { color: '#DD6B20' }]}>
           {ratio}%
         </Text>
       </View>
 
       {/* ⏱️ TODAY'S SHIFT REAL-TIME SUMMARY */}
-      <Text style={styles.sectionHeadingLabel}>Today's Shift Status</Text>
+      <View style={styles.sectionHeaderRow}>
+        <Ionicons name="time" size={16} color="#2B6CB0" />
+        <Text style={styles.sectionHeadingLabel}>Today's Shift Status</Text>
+      </View>
+      
       <View style={styles.statusTrackingPanel}>
         <View style={styles.statusBoxItem}>
-          <View style={[styles.statusIndicatorIndicator, todayPunch.in === 'ABSENT' ? { backgroundColor: '#E53E3E' } : { backgroundColor: '#4CAF50' }]} />
+          <View style={[styles.statusIndicator, todayPunch.in === 'ABSENT' ? { backgroundColor: '#E53E3E' } : todayPunch.in !== '--:--' ? { backgroundColor: '#38A169' } : { backgroundColor: '#CBD5E0' }]} />
           <View style={styles.statusMetaContainer}>
-            <Text style={styles.statusBoxTitleLabel}>Punch In Time</Text>
+            <Text style={styles.statusBoxTitleLabel}>Punch In</Text>
             <Text style={[
               styles.statusBoxTimeDisplay, 
-              todayPunch.in === 'ABSENT' ? { color: '#E53E3E' } : todayPunch.in !== '--:--' ? { color: '#4CAF50' } : null
+              todayPunch.in === 'ABSENT' ? { color: '#E53E3E' } : todayPunch.in !== '--:--' ? { color: '#2D3748' } : null
             ]}>
               {todayPunch.in}
             </Text>
@@ -164,12 +188,12 @@ export default function HomeScreen() {
         <View style={styles.statusBoxVerticalDivider} />
 
         <View style={styles.statusBoxItem}>
-          <View style={[styles.statusIndicatorIndicator, todayPunch.out === 'ABSENT' ? { backgroundColor: '#E53E3E' } : { backgroundColor: '#8E8E93' }]} />
+          <View style={[styles.statusIndicator, todayPunch.out === 'ABSENT' ? { backgroundColor: '#E53E3E' } : todayPunch.out !== '--:--' ? { backgroundColor: '#007AFF' } : { backgroundColor: '#CBD5E0' }]} />
           <View style={styles.statusMetaContainer}>
-            <Text style={styles.statusBoxTitleLabel}>Punch Out Time</Text>
+            <Text style={styles.statusBoxTitleLabel}>Punch Out</Text>
             <Text style={[
               styles.statusBoxTimeDisplay, 
-              todayPunch.out === 'ABSENT' ? { color: '#E53E3E' } : todayPunch.out !== '--:--' ? { color: '#E53E3E' } : null
+              todayPunch.out === 'ABSENT' ? { color: '#E53E3E' } : todayPunch.out !== '--:--' ? { color: '#2D3748' } : null
             ]}>
               {todayPunch.out}
             </Text>
@@ -179,71 +203,80 @@ export default function HomeScreen() {
 
       {/* 📌 SYSTEM NOTICE ANNOUNCEMENT PLUG */}
       <View style={styles.noticeBoardCardFrame}>
-        <Text style={styles.noticeCardTitleText}>📌 System Announcement</Text>
+        <View style={styles.noticeHeaderRow}>
+          <Ionicons name="information-circle" size={18} color="#2B6CB0" style={{ marginRight: 6 }} />
+          <Text style={styles.noticeCardTitleText}>Month Lifecycle Synced</Text>
+        </View>
         <Text style={styles.noticeCardBodyText}>
-          Your structural metrics have synced permanently with MongoDB. Pull down to refresh your attendance metrics if you updated your shift info recently.
+          Your dynamic shift metric arrays reset cleanly at the close of each month cycle. Swipe down on the screen layout container to refresh data streams.
         </Text>
       </View>
 
-      {/* 📍 FLOATING ACTION COMMAND PROMPT BUTTON */}
+      {/* 📍 FLOATING ACTION COMMAND BUTTON */}
       <TouchableOpacity 
         style={styles.masterActionButtonLauncher}
         activeOpacity={0.85}
         onPress={() => router.push('/attendance')}
       >
-        <Text style={styles.masterActionButtonLauncherText}>Launch GPS Verification Desk 📍</Text>
+        <FontAwesome5 name="map-marker-alt" size={14} color="#FFFFFF" style={{ marginRight: 8 }} />
+        <Text style={styles.masterActionButtonLauncherText}>Open GPS Verification Desk</Text>
       </TouchableOpacity>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F4F7FA', paddingHorizontal: 20, paddingTop: 20 },
+  container: { flex: 1, backgroundColor: '#F8FAFC', paddingHorizontal: 16, paddingTop: 20 },
   
   // Executive Hero Card Styles
-  dashboardHeroCard: { backgroundColor: '#007AFF', padding: 22, borderRadius: 24, shadowColor: '#007AFF', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.15, shadowRadius: 15, elevation: 4, marginBottom: 25 },
+  dashboardHeroCard: { backgroundColor: '#007AFF', padding: 20, borderRadius: 20, shadowColor: '#007AFF', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.12, shadowRadius: 12, elevation: 3, marginBottom: 20 },
   heroHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  heroTimeLabel: { color: '#E0F0FF', fontSize: 13, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5 },
-  heroNameHeading: { color: '#FFFFFF', fontSize: 24, fontWeight: '800', marginTop: 2 },
-  heroRoleTag: { color: '#B3D7FF', fontSize: 14, fontWeight: '600', marginTop: 3 },
-  heroAvatarBadge: { width: 54, height: 54, borderRadius: 27, backgroundColor: 'rgba(255,255,255,0.2)', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)' },
-  heroAvatarText: { color: '#FFFFFF', fontSize: 22, fontWeight: '800' },
-  heroDividerLine: { height: 1, backgroundColor: 'rgba(255,255,255,0.15)', marginVertical: 16 },
+  heroTextGroup: { flex: 1, paddingRight: 10 },
+  heroTimeLabel: { color: '#E0F0FF', fontSize: 12, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5 },
+  heroNameHeading: { color: '#FFFFFF', fontSize: 22, fontWeight: '800', marginTop: 2 },
+  heroRoleTag: { color: '#B3D7FF', fontSize: 13, fontWeight: '600', marginTop: 2 },
+  heroAvatarBadge: { width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(255,255,255,0.2)', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)' },
+  heroAvatarText: { color: '#FFFFFF', fontSize: 18, fontWeight: '800' },
+  heroDividerLine: { height: 1, backgroundColor: 'rgba(255,255,255,0.12)', marginVertical: 14 },
   heroFooterRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  heroIdBadgeText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700', opacity: 0.9 },
-  dateBadgePill: { backgroundColor: 'rgba(255,255,255,0.15)', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 12 },
-  dateBadgePillText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' },
+  metaBadgeItem: { flexDirection: 'row', alignItems: 'center' },
+  heroIdBadgeText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700', opacity: 0.9, marginLeft: 5 },
+  dateBadgePill: { backgroundColor: 'rgba(255,255,255,0.15)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10, flexDirection: 'row', alignItems: 'center' },
+  dateBadgePillText: { color: '#FFFFFF', fontSize: 11, fontWeight: '700' },
 
-  // Section Labels Styles
-  sectionHeadingLabel: { fontSize: 13, fontWeight: '800', color: '#2B6CB0', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 12, paddingLeft: 2 },
+  // Layout Section Headers
+  sectionHeaderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 10, paddingLeft: 2 },
+  sectionHeadingLabel: { fontSize: 12, fontWeight: '800', color: '#4A5568', textTransform: 'uppercase', letterSpacing: 0.5, marginLeft: 6 },
 
   // Analytics Grid Row Styles
-  metricsGridRow: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginBottom: 15 },
-  metricCardBox: { backgroundColor: '#FFFFFF', width: '48%', borderRadius: 20, padding: 18, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.02, shadowRadius: 8, elevation: 2 },
-  metricCardEmoji: { fontSize: 22, marginBottom: 8 },
-  metricCardCountValue: { fontSize: 24, fontWeight: '800', color: '#1A202C' },
-  metricCardSublabel: { fontSize: 12, fontWeight: '700', color: '#A0AEC0', marginTop: 3 },
+  metricsGridRow: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginBottom: 12 },
+  metricCardBox: { backgroundColor: '#FFFFFF', width: '48.5%', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#E2E8F0', borderLeftWidth: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.01, shadowRadius: 4, elevation: 1 },
+  iconContainer: { width: 32, height: 32, borderRadius: 8, justifyContent: 'center', alignItems: 'center', marginBottom: 10 },
+  metricCardCountValue: { fontSize: 22, fontWeight: '800', color: '#1A202C' },
+  metricCardSublabel: { fontSize: 11, fontWeight: '700', color: '#718096', marginTop: 2 },
 
   // Ratio Metrics style
-  ratioCard: { backgroundColor: '#FFFFFF', padding: 16, borderRadius: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 25, borderWidth: 1, borderColor: '#E2E8F0' },
+  ratioCard: { backgroundColor: '#FFFFFF', padding: 14, borderRadius: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.01, shadowRadius: 4, elevation: 1 },
+  ratioLeftFrame: { flexDirection: 'row', alignItems: 'center' },
   ratioLabel: { fontSize: 13, fontWeight: '700', color: '#4A5568' },
-  ratioValue: { fontSize: 18, fontWeight: '800' },
+  ratioValue: { fontSize: 16, fontWeight: '800' },
 
   // Tracking Panel Styles
-  statusTrackingPanel: { backgroundColor: '#FFFFFF', padding: 16, borderRadius: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.02, shadowRadius: 8, elevation: 2, borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 25 },
-  statusBoxItem: { flex: 1, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8 },
-  statusIndicatorIndicator: { width: 6, height: 32, borderRadius: 3 },
-  statusMetaContainer: { marginLeft: 12 },
-  statusBoxTitleLabel: { color: '#718096', fontSize: 12, fontWeight: '700' },
-  statusBoxTimeDisplay: { fontSize: 16, fontWeight: '800', color: '#2D3748', marginTop: 3 },
-  statusBoxVerticalDivider: { width: 1, height: 40, backgroundColor: '#EDF2F7' },
+  statusTrackingPanel: { backgroundColor: '#FFFFFF', padding: 14, borderRadius: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.01, shadowRadius: 4, elevation: 1, marginBottom: 20 },
+  statusBoxItem: { flex: 1, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4 },
+  statusIndicator: { width: 4, height: 28, borderRadius: 2 },
+  statusMetaContainer: { marginLeft: 10 },
+  statusBoxTitleLabel: { color: '#718096', fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.2 },
+  statusBoxTimeDisplay: { fontSize: 15, fontWeight: '800', color: '#2D3748', marginTop: 2 },
+  statusBoxVerticalDivider: { width: 1, height: 34, backgroundColor: '#EDF2F7' },
 
   // System Announcements Box Styles
-  noticeBoardCardFrame: { backgroundColor: '#EBF8FF', padding: 16, borderRadius: 20, borderWidth: 1, borderColor: '#BEE3F8', marginBottom: 25 },
-  noticeCardTitleText: { fontSize: 14, fontWeight: '700', color: '#2B6CB0', marginBottom: 4 },
-  noticeCardBodyText: { fontSize: 13, color: '#2C5282', lineHeight: 18, fontWeight: '500' },
+  noticeBoardCardFrame: { backgroundColor: '#EBF8FF', padding: 14, borderRadius: 16, borderWidth: 1, borderColor: '#BEE3F8', marginBottom: 20 },
+  noticeHeaderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
+  noticeCardTitleText: { fontSize: 13, fontWeight: '700', color: '#2B6CB0' },
+  noticeCardBodyText: { fontSize: 12, color: '#2C5282', lineHeight: 16, fontWeight: '500' },
 
   // Bottom Interactive Action Button Styles
-  masterActionButtonLauncher: { backgroundColor: '#4CAF50', paddingVertical: 16, borderRadius: 16, alignItems: 'center', justifyContent: 'center', shadowColor: '#4CAF50', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.15, shadowRadius: 10, elevation: 2 },
-  masterActionButtonLauncherText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' }
+  masterActionButtonLauncher: { backgroundColor: '#38A169', paddingVertical: 14, borderRadius: 14, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', shadowColor: '#38A169', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.12, shadowRadius: 8, elevation: 2 },
+  masterActionButtonLauncherText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' }
 });

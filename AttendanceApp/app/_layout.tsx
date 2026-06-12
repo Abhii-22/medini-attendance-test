@@ -2,7 +2,6 @@ import React, { useState, createContext, useContext, useEffect } from 'react';
 import { Slot, useRouter, useSegments } from 'expo-router';
 import { AttendanceProvider } from '@/constants/AttendanceContext';
 
-// 🌐 Your Computer's Wi-Fi IPv4 Network Portal Coordinate
 export const API_BASE_URL = 'http://192.168.1.10:5000/api';
 
 interface AuthContextType {
@@ -23,7 +22,7 @@ export function useAuth() {
 }
 
 function InitialLayoutProtection() {
-  const { isAuthenticated, isAdmin, adminTargetRoute } = useAuth();
+  const { isAuthenticated, currentUser, isAdmin, adminTargetRoute } = useAuth();
   const segments = useSegments();
   const router = useRouter();
   const [isNavigationReady, setIsNavigationReady] = useState(false);
@@ -45,21 +44,16 @@ function InitialLayoutProtection() {
         router.replace('/login');
       }
     } else {
-      if (isAdmin) {
-        if (adminTargetRoute === 'adminView') {
-          if (!inAdminViewPage) router.replace('/adminView');
-        } else {
-          if (!inAdminPage) router.replace('/admin');
-        }
+      if (adminTargetRoute === 'adminView' || currentUser?.role === 'ADMIN_VIEW') {
+        if (!inAdminViewPage) router.replace('/adminView');
+      } else if (adminTargetRoute === 'admin' || isAdmin) {
+        if (!inAdminPage) router.replace('/admin');
       } else {
-        if (!inTabsGroup) {
-          router.replace('/(tabs)'); 
-        }
+        if (!inTabsGroup) router.replace('/(tabs)'); 
       }
     }
-  }, [isAuthenticated, isAdmin, adminTargetRoute, segments, isNavigationReady]);
+  }, [isAuthenticated, isAdmin, adminTargetRoute, currentUser, segments, isNavigationReady]);
 
-  // Lazy execution safely drops the require cycle warning block!
   if (!isAuthenticated) {
     const LoginScreen = require('@/app/login').default;
     return <LoginScreen />;

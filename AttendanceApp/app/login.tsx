@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { StyleSheet, Text, View, TextInput, TouchableOpacity, Alert, KeyboardAvoidingView, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useAuth, API_BASE_URL } from './_layout'; // Import both safely from layout directly
+import { useAuth, API_BASE_URL } from './_layout'; 
 
 export default function LoginScreen() {
   const { login } = useAuth();
@@ -19,7 +19,6 @@ export default function LoginScreen() {
     }
 
     setIsLoading(true);
-    const backendMode = loginMode === 'EMPLOYEE' ? 'EMPLOYEE' : 'ADMIN';
 
     try {
       const response = await fetch(`${API_BASE_URL}/auth/login`, {
@@ -28,32 +27,51 @@ export default function LoginScreen() {
         body: JSON.stringify({
           email: email.trim(),
           password: password.trim(),
-          loginMode: backendMode,
+          loginMode: loginMode, 
         }),
       });
 
       const result = await response.json();
 
       if (response.ok && result.success) {
+        
+        // 🚀 CRITICAL NEW SECURITY LAYER: Validate matching authorization parameters
+        if (loginMode === 'EMPLOYEE' && result.user?.role === 'ADMIN_VIEW') {
+          Alert.alert(
+            'Access Denied 🔐',
+            'This account has Administrative View status. Please use the "Admin View" tab to sign in.'
+          );
+          setIsLoading(false);
+          return;
+        }
+
+        // Prevent standard employees from crossing over if loginMode mismatch happens
+        if (loginMode === 'ADMIN_VIEW' && result.user?.role !== 'ADMIN_VIEW') {
+          Alert.alert(
+            'Access Denied 🔐',
+            'This account does not have supervisor monitoring clearance.'
+          );
+          setIsLoading(false);
+          return;
+        }
+
+        // Route clean validated handshakes safely[cite: 2]
         if (loginMode === 'ADMIN_VIEW') {
-          login(result.user, result.isAdmin, 'adminView');
+          login(result.user, result.isAdmin, 'adminView'); //[cite: 2]
         } else if (loginMode === 'ADMIN_PANEL') {
-          login(result.user, result.isAdmin, 'admin');
+          login(result.user, result.isAdmin, 'admin'); //[cite: 2]
         } else {
-          login(result.user, result.isAdmin);
+          login(result.user, result.isAdmin); //[cite: 2]
         }
         
         setEmail('');
         setPassword('');
       } else {
-        Alert.alert('Access Denied 🔐', result.message || 'Invalid credentials matching this context.');
+        Alert.alert('Access Denied 🔐', result.message || 'Invalid credentials matching this context.[cite: 2]');
       }
     } catch (error) {
-      console.error('Login Network Error:', error);
-      Alert.alert(
-        'Connection Error 📡', 
-        'Could not reach the attendance server. Verify your computer server is running and both devices are on the same Wi-Fi network.'
-      );
+      console.error('Login Network Error:', error); //[cite: 2]
+      Alert.alert('Connection Error 📡', 'Could not reach the attendance server.[cite: 2]');
     } finally {
       setIsLoading(false);
     }
@@ -68,74 +86,30 @@ export default function LoginScreen() {
       </View>
 
       <View style={styles.tabToggleRow}>
-        <TouchableOpacity 
-          style={[styles.toggleTab, loginMode === 'EMPLOYEE' && styles.activeToggleTab]} 
-          onPress={() => setLoginMode('EMPLOYEE')}
-          disabled={isLoading}
-        >
+        <TouchableOpacity style={[styles.toggleTab, loginMode === 'EMPLOYEE' && styles.activeToggleTab]} onPress={() => setLoginMode('EMPLOYEE')} disabled={isLoading}>
           <Text style={[styles.tabText, loginMode === 'EMPLOYEE' && styles.activeTabText]}>Employee</Text>
         </TouchableOpacity>
-        
-        <TouchableOpacity 
-          style={[styles.toggleTab, loginMode === 'ADMIN_VIEW' && styles.activeToggleTab]} 
-          onPress={() => setLoginMode('ADMIN_VIEW')}
-          disabled={isLoading}
-        >
+        <TouchableOpacity style={[styles.toggleTab, loginMode === 'ADMIN_VIEW' && styles.activeToggleTab]} onPress={() => setLoginMode('ADMIN_VIEW')} disabled={isLoading}>
           <Text style={[styles.tabText, loginMode === 'ADMIN_VIEW' && styles.activeTabText]}>Admin View</Text>
         </TouchableOpacity>
-
-        <TouchableOpacity 
-          style={[styles.toggleTab, loginMode === 'ADMIN_PANEL' && styles.activeToggleTab]} 
-          onPress={() => setLoginMode('ADMIN_PANEL')}
-          disabled={isLoading}
-        >
+        <TouchableOpacity style={[styles.toggleTab, loginMode === 'ADMIN_PANEL' && styles.activeToggleTab]} onPress={() => setLoginMode('ADMIN_PANEL')} disabled={isLoading}>
           <Text style={[styles.tabText, loginMode === 'ADMIN_PANEL' && styles.activeTabText]}>Admin Panel</Text>
         </TouchableOpacity>
       </View>
 
       <View style={styles.authFormCard}>
         <Text style={styles.formContextTitle}>
-          {loginMode === 'EMPLOYEE' 
-            ? 'Sign in to Log Daily Attendance' 
-            : loginMode === 'ADMIN_VIEW' 
-            ? 'Administrative Read-Only View Gateway' 
-            : 'Administrative Management Gateway'
-          }
+          {loginMode === 'EMPLOYEE' ? 'Sign in to Log Daily Attendance' : loginMode === 'ADMIN_VIEW' ? 'Administrative Read-Only View Gateway' : 'Administrative Management Gateway'}
         </Text>
 
         <Text style={styles.inputLabel}>Official Email</Text>
-        <TextInput 
-          style={styles.inputField}
-          value={email}
-          onChangeText={setEmail}
-          placeholder={loginMode === 'EMPLOYEE' ? 'name@company.com' : 'admin@medini.com'}
-          placeholderTextColor="#A0AEC0"
-          keyboardType="email-address"
-          autoCapitalize="none"
-          editable={!isLoading}
-        />
+        <TextInput style={styles.inputField} value={email} onChangeText={setEmail} placeholder={loginMode === 'EMPLOYEE' ? 'name@company.com' : 'admin@medini.com'} placeholderTextColor="#A0AEC0" keyboardType="email-address" autoCapitalize="none" editable={!isLoading} />
 
         <Text style={styles.inputLabel}>Secure Password</Text>
-        <TextInput 
-          style={styles.inputField}
-          value={password}
-          onChangeText={setPassword}
-          placeholder="••••••••"
-          placeholderTextColor="#A0AEC0"
-          secureTextEntry
-          autoCapitalize="none"
-          editable={!isLoading}
-        />
+        <TextInput style={styles.inputField} value={password} onChangeText={setPassword} placeholder="••••••••" placeholderTextColor="#A0AEC0" secureTextEntry autoCapitalize="none" editable={!isLoading} />
 
-        <TouchableOpacity 
-          style={[styles.primaryAuthBtn, isLoading && { opacity: 0.6 }]} 
-          activeOpacity={0.8} 
-          onPress={handleAuthenticationSubmit}
-          disabled={isLoading}
-        >
-          <Text style={styles.primaryAuthBtnText}>
-            {isLoading ? 'Verifying... ⏳' : 'Secure Login 🔐'}
-          </Text>
+        <TouchableOpacity style={[styles.primaryAuthBtn, isLoading && { opacity: 0.6 }]} activeOpacity={0.8} onPress={handleAuthenticationSubmit} disabled={isLoading}>
+          <Text style={styles.primaryAuthBtnText}>{isLoading ? 'Verifying... ⏳' : 'Secure Login 🔐'}</Text>
         </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>

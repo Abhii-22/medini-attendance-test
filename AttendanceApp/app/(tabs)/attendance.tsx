@@ -5,6 +5,7 @@ import * as Location from 'expo-location';
 import { OFFICE_LOCATION } from '@/constants/Location';
 import { useAttendance } from '@/constants/AttendanceContext';
 import { useAuth, API_BASE_URL } from '../_layout'; 
+import { Ionicons, MaterialIcons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 
 const { width } = Dimensions.get('window');
 
@@ -30,16 +31,13 @@ export default function AttendanceScreen() {
   const [currentDistance, setCurrentDistance] = useState<number | null>(null);
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
   
-  // Permanent Cloud History State
   const [permanentHistory, setPermanentHistory] = useState<BackendLog[]>([]);
   const cameraRef = useRef<any>(null);
 
-  // Safely extract active identity fallback names
   const employeeName = currentUser?.name || 'Employee';
   const employeeId = currentUser?.employeeId || 'N/A';
   const employeeDept = currentUser?.designation || 'Staff Member';
 
-  // Fetch permanent history from MongoDB Atlas on screen load
   const fetchPermanentCloudHistory = async () => {
     if (!currentUser?.name) return;
     try {
@@ -53,7 +51,6 @@ export default function AttendanceScreen() {
     }
   };
 
-  // Trigger sync loop whenever the logged in user changes
   useEffect(() => {
     fetchPermanentCloudHistory();
   }, [currentUser]);
@@ -116,7 +113,6 @@ export default function AttendanceScreen() {
 
       setCurrentDistance(distance);
 
-      // 🚀 FIXED: Safe nullish coalescing to prevent object null/undefined errors
       const locationAccuracy = position?.coords?.accuracy ?? 0;
 
       if (distance <= OFFICE_LOCATION.radiusInMeters || locationAccuracy > 100) {
@@ -214,7 +210,7 @@ export default function AttendanceScreen() {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#F4F7FA' }}>
+    <View style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
       {showCamera ? (
         <View style={styles.cameraContainer}>
           <CameraView style={StyleSheet.absoluteFillObject} facing="front" ref={cameraRef} />
@@ -265,7 +261,10 @@ export default function AttendanceScreen() {
           {/* ACTION DASHBOARD HUB */}
           {!isLocationVerified && !loading && !capturedPhoto && (
             <View style={styles.actionPanel}>
-              <Text style={styles.panelSectionHeading}>Workplace Verification Desk</Text>
+              <View style={styles.sectionHeaderRowInline}>
+                <FontAwesome5 name="satellite-dish" size={14} color="#1A202C" />
+                <Text style={styles.panelSectionHeading}>Verification Desk</Text>
+              </View>
               <Text style={styles.panelSectionSubheading}>Execute verification checks to submit shift intervals:</Text>
               
               <View style={styles.gridRow}>
@@ -274,8 +273,8 @@ export default function AttendanceScreen() {
                   style={[styles.dashboardCardBtn, styles.cardBtnIn]}
                   onPress={() => handleVerifyLocation('LOGIN')}
                 >
-                  <View style={styles.cardIconCircle}>
-                    <Text style={{ fontSize: 22 }}>📥</Text>
+                  <View style={[styles.cardIconCircle, { backgroundColor: '#E6F4EA' }]}>
+                    <MaterialIcons name="login" size={20} color="#38A169" />
                   </View>
                   <View>
                     <Text style={styles.cardBtnMainText}>PUNCH IN</Text>
@@ -288,8 +287,8 @@ export default function AttendanceScreen() {
                   style={[styles.dashboardCardBtn, styles.cardBtnOut]}
                   onPress={() => handleVerifyLocation('LOGOUT')}
                 >
-                  <View style={styles.cardIconCircle}>
-                    <Text style={{ fontSize: 22 }}>📤</Text>
+                  <View style={[styles.cardIconCircle, { backgroundColor: '#FCE8E6' }]}>
+                    <MaterialIcons name="logout" size={20} color="#E53E3E" />
                   </View>
                   <View>
                     <Text style={styles.cardBtnMainText}>PUNCH OUT</Text>
@@ -303,7 +302,8 @@ export default function AttendanceScreen() {
                 activeOpacity={0.8}
                 onPress={handleMarkAbsent}
               >
-                <Text style={styles.absentButtonText}>❌ Mark As Absent Today</Text>
+                <Ionicons name="close-circle-outline" size={16} color="#E53E3E" style={{ marginRight: 6 }} />
+                <Text style={styles.absentButtonText}>Mark As Absent Today</Text>
               </TouchableOpacity>
             </View>
           )}
@@ -312,7 +312,8 @@ export default function AttendanceScreen() {
           {capturedPhoto && !loading && (
             <View style={styles.reviewLayoutContainer}>
               <View style={styles.successStatusRibbon}>
-                <Text style={styles.successRibbonText}>🛡️ SECURITY METRICS COMPLIANT</Text>
+                <Ionicons name="shield-checkmark" size={12} color="#234E52" style={{ marginRight: 4 }} />
+                <Text style={styles.successRibbonText}>SECURITY METRICS COMPLIANT</Text>
               </View>
               
               <Text style={styles.reviewMainHeading}>Confirm Sign-off Record</Text>
@@ -327,6 +328,7 @@ export default function AttendanceScreen() {
 
               {currentDistance !== null && (
                 <View style={styles.metricLabelRow}>
+                  <MaterialCommunityIcons name="map-marker-distance" size={16} color="#718096" />
                   <Text style={styles.metricLabelLabel}>Perimeter Tolerance Drift:</Text>
                   <Text style={styles.metricLabelValue}>{currentDistance.toFixed(1)} meters</Text>
                 </View>
@@ -334,11 +336,13 @@ export default function AttendanceScreen() {
 
               <View style={styles.formActionButtonGroup}>
                 <TouchableOpacity style={styles.premiumRetakeBtn} onPress={() => setShowCamera(true)}>
-                  <Text style={styles.premiumRetakeBtnText}>Retake Photo 🔄</Text>
+                  <Ionicons name="refresh" size={16} color="#4A5568" style={{ marginRight: 4 }} />
+                  <Text style={styles.premiumRetakeBtnText}>Retake Photo</Text>
                 </TouchableOpacity>
                 
                 <TouchableOpacity style={styles.premiumSubmitBtn} onPress={handleSubmitAttendance}>
-                  <Text style={styles.premiumSubmitBtnText}>Submit Logs 🚀</Text>
+                  <Ionicons name="cloud-upload-outline" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                  <Text style={styles.premiumSubmitBtnText}>Submit Logs</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -347,9 +351,14 @@ export default function AttendanceScreen() {
           {/* PERMANENT CLOUD HISTORY VIEW */}
           {!loading && !showCamera && (
             <View style={styles.historySection}>
-              <Text style={styles.historyHeading}>Permanent Cloud Shift Records</Text>
+              <View style={styles.sectionHeaderRow}>
+                <Ionicons name="cloud-done-outline" size={16} color="#2B6CB0" />
+                <Text style={styles.historyHeading}>Permanent Cloud Shift Records</Text>
+              </View>
+              
               {permanentHistory.length === 0 ? (
                 <View style={styles.emptyHistoryCard}>
+                  <Ionicons name="folder-open-outline" size={24} color="#A0AEC0" style={{ marginBottom: 6 }} />
                   <Text style={styles.emptyHistoryText}>No permanent cloud logs generated for this profile yet.</Text>
                 </View>
               ) : (
@@ -366,11 +375,16 @@ export default function AttendanceScreen() {
                       >
                         <View style={styles.historyCardLeft}>
                           <View style={styles.historyCalendarIconCircle}>
-                            <Text style={{ fontSize: 16 }}>📅</Text>
+                            <Ionicons name="calendar" size={16} color="#4A5568" />
                           </View>
                           <View>
                             <Text style={styles.historyDate}>{log.date}</Text>
-                            {(hasInPhoto || hasOutPhoto) && <Text style={styles.photoIndicatorBadge}>📸 Photos Logged</Text>}
+                            {(hasInPhoto || hasOutPhoto) && (
+                              <View style={styles.photoIndicatorBadgePill}>
+                                <Ionicons name="camera" size={10} color="#007AFF" style={{ marginRight: 3 }} />
+                                <Text style={styles.photoIndicatorBadge}>Photos Logged</Text>
+                              </View>
+                            )}
                           </View>
                         </View>
                         
@@ -391,7 +405,7 @@ export default function AttendanceScreen() {
                         </View>
                       </TouchableOpacity>
 
-                      {/* Expandable Dual Photo Drawer View Panel */}
+                      {/* Expandable Photo Drawer Panel */}
                       {isExpanded && (
                         <View style={styles.photoDrawerContainer}>
                           <Text style={styles.drawerLabelTitle}>Shift Compliance Selfie Grid:</Text>
@@ -402,6 +416,7 @@ export default function AttendanceScreen() {
                                 <Image source={{ uri: log.capturedPhotoInUri }} style={styles.drawerSelfiePreviewImage} />
                               ) : (
                                 <View style={styles.noImageDashedPlaceholder}>
+                                  <Ionicons name="image-outline" size={20} color="#A0AEC0" style={{ marginBottom: 4 }} />
                                   <Text style={styles.noImagePlaceholderText}>No Clock-In image</Text>
                                 </View>
                               )}
@@ -412,6 +427,7 @@ export default function AttendanceScreen() {
                                 <Image source={{ uri: log.capturedPhotoOutUri }} style={styles.drawerSelfiePreviewImage} />
                               ) : (
                                 <View style={styles.noImageDashedPlaceholder}>
+                                  <Ionicons name="image-outline" size={20} color="#A0AEC0" style={{ marginBottom: 4 }} />
                                   <Text style={styles.noImagePlaceholderText}>No Clock-Out image</Text>
                                 </View>
                               )}
@@ -432,76 +448,85 @@ export default function AttendanceScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F4F7FA', paddingHorizontal: 20, paddingTop: 20 },
-  premiumHeaderCard: { backgroundColor: '#FFFFFF', padding: 18, borderRadius: 20, flexDirection: 'row', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.02, shadowRadius: 10, elevation: 2, marginBottom: 20, borderWidth: 1, borderColor: '#E2E8F0' },
-  avatarBadge: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#EBF4FF', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#BEE3F8' },
-  avatarText: { color: '#007AFF', fontSize: 18, fontWeight: '800' },
-  headerMeta: { marginLeft: 14, flex: 1 },
-  employeeName: { fontSize: 17, fontWeight: '800', color: '#1A202C' },
-  employeeId: { fontSize: 12, fontWeight: '600', color: '#718096', marginTop: 2 },
-  actionPanel: { backgroundColor: '#FFFFFF', padding: 20, borderRadius: 24, borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.02, shadowRadius: 10, elevation: 2, marginBottom: 20 },
-  panelSectionHeading: { fontSize: 15, fontWeight: '800', color: '#1A202C', letterSpacing: 0.3, marginBottom: 4 },
-  panelSectionSubheading: { fontSize: 12, color: '#718096', fontWeight: '500', marginBottom: 20 },
+  container: { flex: 1, backgroundColor: '#F8FAFC', paddingHorizontal: 16, paddingTop: 20 },
+  premiumHeaderCard: { backgroundColor: '#FFFFFF', padding: 16, borderRadius: 16, flexDirection: 'row', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.01, shadowRadius: 4, elevation: 1, marginBottom: 20, borderWidth: 1, borderColor: '#E2E8F0' },
+  avatarBadge: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#EBF4FF', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#BEE3F8' },
+  avatarText: { color: '#007AFF', fontSize: 16, fontWeight: '800' },
+  headerMeta: { marginLeft: 12, flex: 1 },
+  employeeName: { fontSize: 16, fontWeight: '800', color: '#1A202C' },
+  employeeId: { fontSize: 12, fontWeight: '600', color: '#718096', marginTop: 1 },
+  
+  actionPanel: { backgroundColor: '#FFFFFF', padding: 16, borderRadius: 16, borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.01, shadowRadius: 4, elevation: 1, marginBottom: 20 },
+  sectionHeaderRowInline: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
+  panelSectionHeading: { fontSize: 14, fontWeight: '800', color: '#1A202C', marginLeft: 6 },
+  panelSectionSubheading: { fontSize: 12, color: '#718096', fontWeight: '500', marginBottom: 16, paddingLeft: 2 },
   gridRow: { flexDirection: 'row', justifyContent: 'space-between', width: '100%' },
-  dashboardCardBtn: { width: '48%', height: 130, borderRadius: 16, padding: 16, justifyContent: 'space-between', borderWidth: 1, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.01, shadowRadius: 5, elevation: 1 },
+  dashboardCardBtn: { width: '48.5%', height: 120, borderRadius: 14, padding: 14, justifyContent: 'space-between', borderWidth: 1, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.01, shadowRadius: 4, elevation: 1 },
   cardBtnIn: { backgroundColor: '#F6FDF9', borderColor: '#C6F6D5' },
   cardBtnOut: { backgroundColor: '#FFF5F5', borderColor: '#FED7D7' },
-  cardIconCircle: { width: 38, height: 38, borderRadius: 10, backgroundColor: '#FFFFFF', justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 1 },
-  cardBtnMainText: { fontSize: 14, fontWeight: '800', color: '#2D3748' },
+  cardIconCircle: { width: 34, height: 34, borderRadius: 10, justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.02, shadowRadius: 2, elevation: 1 },
+  cardBtnMainText: { fontSize: 13, fontWeight: '800', color: '#2D3748' },
   cardBtnSubtext: { fontSize: 11, color: '#718096', fontWeight: '600', marginTop: 1 },
-  absentButtonLarge: { backgroundColor: '#F7FAFC', borderWidth: 1, borderColor: '#E2E8F0', paddingVertical: 14, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginTop: 16 },
-  absentButtonText: { color: '#E53E3E', fontSize: 14, fontWeight: '700' },
+  absentButtonLarge: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E2E8F0', paddingVertical: 12, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginTop: 14, flexDirection: 'row' },
+  absentButtonText: { color: '#E53E3E', fontSize: 13, fontWeight: '700' },
+  
   cameraContainer: { flex: 1, backgroundColor: '#000' },
   cameraOverlay: { justifyContent: 'space-between', paddingVertical: 40 },
   topInfoBar: { width: '100%', alignItems: 'center' },
-  topBarText: { color: '#FFF', fontSize: 13, fontWeight: '700', backgroundColor: 'rgba(0,0,0,0.6)', paddingVertical: 6, paddingHorizontal: 16, borderRadius: 20, overflow: 'hidden' },
+  topBarText: { color: '#FFF', fontSize: 12, fontWeight: '700', backgroundColor: 'rgba(0,0,0,0.6)', paddingVertical: 6, paddingHorizontal: 16, borderRadius: 20, overflow: 'hidden' },
   reticleContainer: { alignItems: 'center', justifyContent: 'center', flex: 1 },
   faceTargetRing: { width: width * 0.65, height: width * 0.85, borderRadius: (width * 0.65) / 2, borderWidth: 2, borderColor: '#38A169', borderStyle: 'dashed', backgroundColor: 'rgba(255,255,255,0.02)', marginBottom: 20 },
-  cameraInstruction: { color: '#FFF', fontSize: 14, fontWeight: '600', textShadowColor: '#000', textShadowOffset: { width: 1, height: 1 }, textShadowRadius: 2 },
+  cameraInstruction: { color: '#FFF', fontSize: 13, fontWeight: '600', textShadowColor: '#000', textShadowOffset: { width: 1, height: 1 }, textShadowRadius: 2 },
   shutterControlBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 40, width: '100%' },
   closeCameraBtn: { padding: 10 },
-  closeBtnText: { color: '#FFF', fontSize: 15, fontWeight: '600' },
-  captureBtn: { width: 72, height: 72, borderRadius: 36, borderWidth: 4, borderColor: '#FFF', justifyContent: 'center', alignItems: 'center', marginBottom: 20 },
-  captureBtnInner: { width: 56, height: 56, borderRadius: 28, backgroundColor: '#FFF' },
-  reviewLayoutContainer: { backgroundColor: '#FFFFFF', borderRadius: 24, padding: 20, alignItems: 'center', borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.04, shadowRadius: 15, elevation: 2, marginVertical: 10 },
-  successStatusRibbon: { backgroundColor: '#E6FFFA', paddingVertical: 5, paddingHorizontal: 12, borderRadius: 20, marginBottom: 15 },
-  successRibbonText: { color: '#234E52', fontSize: 11, fontWeight: '800', letterSpacing: 0.5 },
-  reviewMainHeading: { fontSize: 18, fontWeight: '800', color: '#1A202C' },
-  reviewSubheading: { fontSize: 13, color: '#718096', marginTop: 4, textAlign: 'center', marginBottom: 20 },
-  imagePreviewFrameShadow: { shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.1, shadowRadius: 12, elevation: 4, marginBottom: 20, position: 'relative' },
-  premiumPreviewImage: { width: 160, height: 160, borderRadius: 80, borderWidth: 4, borderColor: '#FFFFFF' },
-  floatingModeTag: { position: 'absolute', bottom: -5, backgroundColor: '#007AFF', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 8, alignSelf: 'center' },
-  floatingTagText: { color: '#FFF', fontSize: 10, fontWeight: '800' },
-  metricLabelRow: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginVertical: 10, backgroundColor: '#F7FAFC', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12, width: '100%', borderWidth: 1, borderColor: '#E2E8F0' },
-  metricLabelLabel: { color: '#718096', fontSize: 13, fontWeight: '500' },
-  metricLabelValue: { color: '#2D3748', fontSize: 13, fontWeight: '700', marginLeft: 6 },
-  formActionButtonGroup: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginTop: 10 },
-  premiumSubmitBtn: { backgroundColor: '#007AFF', width: '56%', paddingVertical: 14, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  premiumSubmitBtnText: { color: '#FFF', fontSize: 15, fontWeight: '700' },
-  premiumRetakeBtn: { borderColor: '#CBD5E0', borderWidth: 1, width: '40%', paddingVertical: 14, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF' },
-  premiumRetakeBtnText: { color: '#4A5568', fontSize: 15, fontWeight: '600' },
-  modernLoaderContainer: { paddingVertical: 30, justifyContent: 'center', alignItems: 'center' },
-  modernLoaderText: { color: '#4A5568', fontSize: 13, marginTop: 10, fontWeight: '600' },
-  historySection: { marginTop: 25 },
-  historyHeading: { fontSize: 13, fontWeight: '800', color: '#2B6CB0', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 12, paddingLeft: 2 },
-  emptyHistoryCard: { backgroundColor: '#FFFFFF', padding: 20, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#E2E8F0' },
-  emptyHistoryText: { color: '#A0AEC0', fontSize: 13, fontStyle: 'italic', fontWeight: '500' },
+  closeBtnText: { color: '#FFF', fontSize: 14, fontWeight: '600' },
+  captureBtn: { width: 64, height: 64, borderRadius: 32, borderWidth: 4, borderColor: '#FFF', justifyContent: 'center', alignItems: 'center', marginBottom: 20 },
+  captureBtnInner: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#FFF' },
+  
+  reviewLayoutContainer: { backgroundColor: '#FFFFFF', borderRadius: 20, padding: 16, alignItems: 'center', borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.02, shadowRadius: 10, elevation: 2, marginVertical: 4 },
+  successStatusRibbon: { backgroundColor: '#E6FFFA', paddingVertical: 5, paddingHorizontal: 10, borderRadius: 20, marginBottom: 12, flexDirection: 'row', alignItems: 'center' },
+  successRibbonText: { color: '#234E52', fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
+  reviewMainHeading: { fontSize: 16, fontWeight: '800', color: '#1A202C' },
+  reviewSubheading: { fontSize: 12, color: '#718096', marginTop: 4, textAlign: 'center', marginBottom: 16 },
+  imagePreviewFrameShadow: { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 8, elevation: 3, marginBottom: 20, position: 'relative' },
+  premiumPreviewImage: { width: 140, height: 140, borderRadius: 70, borderWidth: 4, borderColor: '#FFFFFF' },
+  floatingModeTag: { position: 'absolute', bottom: -5, backgroundColor: '#007AFF', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6, alignSelf: 'center' },
+  floatingTagText: { color: '#FFF', fontSize: 9, fontWeight: '800' },
+  metricLabelRow: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginVertical: 8, backgroundColor: '#F7FAFC', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, width: '100%', borderWidth: 1, borderColor: '#E2E8F0' },
+  metricLabelLabel: { color: '#718096', fontSize: 12, fontWeight: '600', marginLeft: 6 },
+  metricLabelValue: { color: '#2D3748', fontSize: 12, fontWeight: '700', marginLeft: 4 },
+  formActionButtonGroup: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginTop: 8 },
+  premiumSubmitBtn: { backgroundColor: '#38A169', width: '56%', paddingVertical: 12, borderRadius: 12, alignItems: 'center', justifyContent: 'center', flexDirection: 'row' },
+  premiumSubmitBtnText: { color: '#FFF', fontSize: 14, fontWeight: '700' },
+  premiumRetakeBtn: { borderColor: '#CBD5E0', borderWidth: 1, width: '40%', paddingVertical: 12, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF', flexDirection: 'row' },
+  premiumRetakeBtnText: { color: '#4A5568', fontSize: 14, fontWeight: '600' },
+  
+  modernLoaderContainer: { paddingVertical: 20, justifyContent: 'center', alignItems: 'center' },
+  modernLoaderText: { color: '#4A5568', fontSize: 12, marginTop: 8, fontWeight: '600' },
+  
+  historySection: { marginTop: 12 },
+  sectionHeaderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 10, paddingLeft: 2 },
+  historyHeading: { fontSize: 12, fontWeight: '800', color: '#4A5568', textTransform: 'uppercase', letterSpacing: 0.5, marginLeft: 6 },
+  emptyHistoryCard: { backgroundColor: '#FFFFFF', padding: 24, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#E2E8F0' },
+  emptyHistoryText: { color: '#A0AEC0', fontSize: 12, fontStyle: 'italic', fontWeight: '600', textAlign: 'center', marginTop: 4 },
   historyCardWrapper: { marginBottom: 10 },
-  historyCard: { backgroundColor: '#FFFFFF', padding: 14, borderRadius: 16, borderWidth: 1, borderColor: '#E2E8F0', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  historyCardExpanded: { borderBottomLeftRadius: 0, borderBottomRightRadius: 0, borderColor: '#CBD5E0' },
+  historyCard: { backgroundColor: '#FFFFFF', padding: 12, borderRadius: 16, borderWidth: 1, borderColor: '#E2E8F0', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.01, shadowRadius: 4, elevation: 1 },
+  historyCardExpanded: { borderBottomLeftRadius: 0, borderBottomRightRadius: 0, borderColor: '#CBD5E0', shadowOpacity: 0, elevation: 0 },
   historyCardLeft: { flexDirection: 'row', alignItems: 'center' },
-  historyCalendarIconCircle: { width: 32, height: 32, borderRadius: 8, backgroundColor: '#F7FAFC', borderWidth: 1, borderColor: '#E2E8F0', justifyContent: 'center', alignItems: 'center', marginRight: 12 },
-  historyDate: { fontSize: 14, fontWeight: '700', color: '#2D3748' },
-  photoIndicatorBadge: { fontSize: 10, fontWeight: '700', color: '#007AFF', marginTop: 2, letterSpacing: 0.2 },
+  historyCalendarIconCircle: { width: 32, height: 32, borderRadius: 8, backgroundColor: '#F7FAFC', borderWidth: 1, borderColor: '#E2E8F0', justifyContent: 'center', alignItems: 'center', marginRight: 10 },
+  historyDate: { fontSize: 13, fontWeight: '700', color: '#2D3748' },
+  photoIndicatorBadgePill: { flexDirection: 'row', alignItems: 'center', marginTop: 2 },
+  photoIndicatorBadge: { fontSize: 10, fontWeight: '700', color: '#007AFF', letterSpacing: 0.1 },
   historyTimeRow: { flexDirection: 'row', alignItems: 'center' },
-  timePillBadge: { backgroundColor: '#F7FAFC', borderWidth: 1, borderColor: '#E2E8F0', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, alignItems: 'center', minWidth: 70 },
-  timePillLabel: { fontSize: 9, fontWeight: '800', color: '#A0AEC0', marginBottom: 1 },
-  timePillValue: { fontSize: 12, fontWeight: '800' },
-  photoDrawerContainer: { backgroundColor: '#F8FAFC', borderBottomLeftRadius: 16, borderBottomRightRadius: 16, borderWidth: 1, borderTopWidth: 0, borderColor: '#CBD5E0', padding: 14 },
+  timePillBadge: { backgroundColor: '#F7FAFC', borderWidth: 1, borderColor: '#E2E8F0', paddingHorizontal: 8, paddingVertical: 5, borderRadius: 8, alignItems: 'center', minWidth: 64 },
+  timePillLabel: { fontSize: 8, fontWeight: '800', color: '#A0AEC0', marginBottom: 1 },
+  timePillValue: { fontSize: 11, fontWeight: '800' },
+  
+  photoDrawerContainer: { backgroundColor: '#F8FAFC', borderBottomLeftRadius: 16, borderBottomRightRadius: 16, borderWidth: 1, borderTopWidth: 0, borderColor: '#CBD5E0', padding: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.01, shadowRadius: 4, elevation: 1 },
   drawerLabelTitle: { fontSize: 11, fontWeight: '800', color: '#718096', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 },
   photoGridRow: { flexDirection: 'row', justifyContent: 'space-between', width: '100%' },
   photoGridLabel: { fontSize: 10, fontWeight: '700', color: '#718096', marginBottom: 4 },
-  drawerSelfiePreviewImage: { width: '100%', height: 160, borderRadius: 12, backgroundColor: '#EDF2F7', resizeMode: 'cover' },
-  noImageDashedPlaceholder: { width: '100%', paddingVertical: 40, backgroundColor: '#FFFFFF', borderRadius: 12, borderWidth: 1, borderStyle: 'dashed', borderColor: '#CBD5E0', justifyContent: 'center', alignItems: 'center' },
+  drawerSelfiePreviewImage: { width: '100%', height: 140, borderRadius: 10, backgroundColor: '#EDF2F7', resizeMode: 'cover' },
+  noImageDashedPlaceholder: { width: '100%', paddingVertical: 36, backgroundColor: '#FFFFFF', borderRadius: 10, borderWidth: 1, borderStyle: 'dashed', borderColor: '#CBD5E0', justifyContent: 'center', alignItems: 'center' },
   noImagePlaceholderText: { color: '#A0AEC0', fontSize: 11, fontWeight: '600', fontStyle: 'italic' }
 });

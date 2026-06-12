@@ -1,0 +1,16 @@
+{
+  "watch": ["server.ts", "models/**/*.ts", "routes/**/*.ts"],
+  "ext": "ts,json",
+  "ignore": [
+    "node_modules",
+    ".git",
+    "dist",
+    "*.log",
+    "*.png",
+    "*.jpg",
+    "*.jpeg",
+    "temp/**/*",
+    "uploads/**/*"
+  ],
+  "exec": "node --no-warnings=ExperimentalWarning --max-old-space-size=4096 --loader ts-node/esm server.ts"
+}
