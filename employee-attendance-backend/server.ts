@@ -124,23 +124,77 @@ app.get('/api/admin/attendance-sheet', async (req: Request, res: Response) => {
   res.status(200).json(sheets);
 });
 
-app.get('/api/admin/download-attendance', async (req: Request, res: Response) => {
-  const employeeName = req.query.employeeName ? String(req.query.employeeName) : 'ALL';
-  const filter = employeeName !== 'ALL' ? { employeeName } : {};
-  
-  const records = await AttendanceShiftLog.find(filter).sort({ createdAt: -1 });
-  
-  let csvData = "Employee Name,Employee ID,Date,Day of Week,Login Time,Logout Time\n";
-  records.forEach(row => {
-    csvData += `"${row.employeeName}","${row.employeeIdReference}","${row.date}","${row.dayOfWeek}","${row.loginTime}","${row.logoutTime}"\n`;
-  });
+// ----------------------------------------------------------------------
+// 3. EXCEL/CSV SHEET STREAM WITH DYNAMIC MONTH, YEAR & WORKING HOURS
+// ----------------------------------------------------------------------
+app.get('/api/admin/download-attendance', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const employeeName = req.query.employeeName ? String(req.query.employeeName) : 'ALL';
+    const filterMonth = req.query.month ? String(req.query.month) : '';
+    const filterYear = req.query.year ? String(req.query.year) : '';
 
-  const timestamp = new Date().toISOString().split('T')[0];
-  res.setHeader('Content-Type', 'text/csv');
-  res.setHeader('Content-Disposition', `attachment; filename=Employee_Attendance_Report_${timestamp}.csv`);
-  res.status(200).send(csvData);
+    const queryFilter = employeeName !== 'ALL' ? { employeeName } : {};
+    const records = await AttendanceShiftLog.find(queryFilter).sort({ date: -1 });
+
+    // ⏱️ STABLE PARSING LOGIC WITH TYPESAFE ARRAY BOUNDARY CHECKS
+    const calculateServerWorkingHours = (inTime: string, outTime: string): string => {
+      if (!inTime || !outTime || inTime === '--:--' || outTime === '--:--' || inTime === 'ABSENT' || outTime === 'ABSENT') {
+        return '--';
+      }
+      try {
+        const parseTimeToMinutes = (timeStr: string) => {
+          const parts = timeStr.split(' ');
+          const timePart = parts[0] || '0:0';
+          const modifier = parts[1] || 'AM';
+
+          const timeSplit = timePart.split(':');
+          let hours = Number(timeSplit[0]) || 0;
+          const minutes = Number(timeSplit[1]) || 0;
+
+          if (modifier === 'PM' && hours < 12) hours += 12;
+          if (modifier === 'AM' && hours === 12) hours = 0;
+          return hours * 60 + minutes;
+        };
+
+        const diffInMinutes = parseTimeToMinutes(outTime) - parseTimeToMinutes(inTime);
+        if (diffInMinutes <= 0) return '0h 0m';
+
+        return `${Math.floor(diffInMinutes / 60)}h ${diffInMinutes % 60}m`;
+      } catch (e) {
+        return '--';
+      }
+    };
+
+    const filteredRecords = records.filter((log: any) => {
+      if (!log.date) return false;
+      const logDateLower = log.date.toLowerCase();
+      const matchesMonth = filterMonth ? logDateLower.includes(filterMonth.toLowerCase()) : true;
+      const matchesYear = filterYear ? logDateLower.includes(filterYear) : true;
+      return matchesMonth && matchesYear;
+    });
+
+    let csvData = "Employee Name,Employee ID,Date,Day of Week,Login Time,Logout Time,Hours Worked\n";
+
+    filteredRecords.forEach(row => {
+      const workingHours = calculateServerWorkingHours(row.loginTime, row.logoutTime);
+      csvData += `"${row.employeeName}","${row.employeeIdReference}","${row.date}","${row.dayOfWeek}","${row.loginTime}","${row.logoutTime}","${workingHours}"\n`;
+    });
+
+    const filePrefixMonth = filterMonth || 'Global';
+    const filePrefixYear = filterYear || new Date().getFullYear().toString();
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename=Attendance_Report_${filePrefixMonth}_${filePrefixYear}.csv`);
+    return res.status(200).send(csvData);
+
+  } catch (err) {
+    return res.status(500).json({ success: false, message: "Spreadsheet compilation failure.", error: err });
+  }
 });
 
+// ----------------------------------------------------
+// 4. BIOMETRIC HARDWARE CLOCK-PUNCH HANDSHAKES
+// ----------------------------------------------------
 app.post('/api/attendance/punch-clock', async (req: Request, res: Response): Promise<any> => {
   const { employeeId, name, type, photoUri } = req.body; 
   
@@ -222,18 +276,25 @@ app.patch('/api/employee/update-profile', async (req: Request, res: Response): P
   }
 });
 
+// ----------------------------------------------------
+// 5. SECURE ENFORCED ENGINE INITIALIZATION BLOCK
+// ----------------------------------------------------
 const ATLAST_MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/employeeAttendanceSystem';
 
 async function bootServerEngine() {
-  try {
-    console.log('Connecting to cloud cluster... ⏳');
-    await mongoose.connect(ATLAST_MONGO_URI);
-    console.log('Attendance System Cloud Database Connected 🌐📜');
-    app.listen(5000, () => console.log('Attendance Server Live On Port 5000 🚀'));
-  } catch (err) {
-    console.error('❌ Critical Server Initialization Failure:', err);
-    process.exit(1);
-  }
+  console.log('Connecting to cloud cluster... ⏳');
+  
+  await mongoose.connect(ATLAST_MONGO_URI)
+    .then(() => {
+      console.log('Attendance System Cloud Database Connected 🌐📜');
+      app.listen(5000, () => console.log('Attendance Server Live On Port 5000 🚀'));
+    })
+    .catch((err) => {
+      console.error('\n❌ CRITICAL INITIALIZATION ERROR DETECTED ON SYSTEM ROOT:');
+      console.error('================================================================');
+      console.error(err);
+      console.error('================================================================\n');
+    });
 }
 
 bootServerEngine();

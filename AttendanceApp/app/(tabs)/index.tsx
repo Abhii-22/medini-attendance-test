@@ -36,6 +36,29 @@ export default function HomeScreen() {
     });
   };
 
+  // ⏱️ CENTRAL PARSING ENGINE TO CALCULATE WORK HOURS ON THE FLY
+  const calculateWorkingHours = (inTime: string, outTime: string) => {
+    if (!inTime || !outTime || inTime === '--:--' || outTime === '--:--' || inTime === 'ABSENT' || outTime === 'ABSENT') {
+      return '--';
+    }
+    try {
+      const parseTimeToMinutes = (timeStr: string) => {
+        const [time, modifier] = timeStr.split(' ');
+        let [hours, minutes] = time.split(':').map(Number);
+        if (modifier === 'PM' && hours < 12) hours += 12;
+        if (modifier === 'AM' && hours === 12) hours = 0;
+        return hours * 60 + minutes;
+      };
+
+      const diffInMinutes = parseTimeToMinutes(outTime) - parseTimeToMinutes(inTime);
+      if (diffInMinutes <= 0) return '0h 0m';
+
+      return `${Math.floor(diffInMinutes / 60)}h ${diffInMinutes % 60}m`;
+    } catch (e) {
+      return '--';
+    }
+  };
+
   const syncDashboardMetricsData = async () => {
     if (!currentUser?.name) return;
     try {
@@ -201,6 +224,19 @@ export default function HomeScreen() {
         </View>
       </View>
 
+      {/* ⏱️ DYNAMIC TODAY'S HOURS WORKED TICKER ACCUMULATOR */}
+      <View style={[styles.ratioCard, { backgroundColor: '#F0FDF4', borderColor: '#DCFCE7' }]}>
+        <View style={styles.ratioLeftFrame}>
+          <View style={[styles.iconContainer, { backgroundColor: '#DCFCE7', marginRight: 12 }]}>
+            <Ionicons name="timer-outline" size={20} color="#16A34A" />
+          </View>
+          <Text style={[styles.ratioLabel, { color: '#16A34A' }]}>Accumulated Work Hours Today</Text>
+        </View>
+        <Text style={[styles.ratioValue, { color: '#15803D' }]}>
+          {calculateWorkingHours(todayPunch.in, todayPunch.out)}
+        </Text>
+      </View>
+
       {/* 📌 SYSTEM NOTICE ANNOUNCEMENT PLUG */}
       <View style={styles.noticeBoardCardFrame}>
         <View style={styles.noticeHeaderRow}>
@@ -227,8 +263,6 @@ export default function HomeScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8FAFC', paddingHorizontal: 16, paddingTop: 20 },
-  
-  // Executive Hero Card Styles
   dashboardHeroCard: { backgroundColor: '#007AFF', padding: 20, borderRadius: 20, shadowColor: '#007AFF', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.12, shadowRadius: 12, elevation: 3, marginBottom: 20 },
   heroHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   heroTextGroup: { flex: 1, paddingRight: 10 },
@@ -243,40 +277,28 @@ const styles = StyleSheet.create({
   heroIdBadgeText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700', opacity: 0.9, marginLeft: 5 },
   dateBadgePill: { backgroundColor: 'rgba(255,255,255,0.15)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10, flexDirection: 'row', alignItems: 'center' },
   dateBadgePillText: { color: '#FFFFFF', fontSize: 11, fontWeight: '700' },
-
-  // Layout Section Headers
   sectionHeaderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 10, paddingLeft: 2 },
   sectionHeadingLabel: { fontSize: 12, fontWeight: '800', color: '#4A5568', textTransform: 'uppercase', letterSpacing: 0.5, marginLeft: 6 },
-
-  // Analytics Grid Row Styles
   metricsGridRow: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginBottom: 12 },
   metricCardBox: { backgroundColor: '#FFFFFF', width: '48.5%', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#E2E8F0', borderLeftWidth: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.01, shadowRadius: 4, elevation: 1 },
   iconContainer: { width: 32, height: 32, borderRadius: 8, justifyContent: 'center', alignItems: 'center', marginBottom: 10 },
   metricCardCountValue: { fontSize: 22, fontWeight: '800', color: '#1A202C' },
   metricCardSublabel: { fontSize: 11, fontWeight: '700', color: '#718096', marginTop: 2 },
-
-  // Ratio Metrics style
-  ratioCard: { backgroundColor: '#FFFFFF', padding: 14, borderRadius: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.01, shadowRadius: 4, elevation: 1 },
+  ratioCard: { backgroundColor: '#FFFFFF', padding: 14, borderRadius: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.01, shadowRadius: 4, elevation: 1 },
   ratioLeftFrame: { flexDirection: 'row', alignItems: 'center' },
   ratioLabel: { fontSize: 13, fontWeight: '700', color: '#4A5568' },
-  ratioValue: { fontSize: 16, fontWeight: '800' },
-
-  // Tracking Panel Styles
-  statusTrackingPanel: { backgroundColor: '#FFFFFF', padding: 14, borderRadius: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.01, shadowRadius: 4, elevation: 1, marginBottom: 20 },
+  ratioValue: { fontSize: 15, fontWeight: '800' },
+  statusTrackingPanel: { backgroundColor: '#FFFFFF', padding: 14, borderRadius: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.01, shadowRadius: 4, elevation: 1, marginBottom: 14 },
   statusBoxItem: { flex: 1, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4 },
   statusIndicator: { width: 4, height: 28, borderRadius: 2 },
   statusMetaContainer: { marginLeft: 10 },
   statusBoxTitleLabel: { color: '#718096', fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.2 },
   statusBoxTimeDisplay: { fontSize: 15, fontWeight: '800', color: '#2D3748', marginTop: 2 },
   statusBoxVerticalDivider: { width: 1, height: 34, backgroundColor: '#EDF2F7' },
-
-  // System Announcements Box Styles
   noticeBoardCardFrame: { backgroundColor: '#EBF8FF', padding: 14, borderRadius: 16, borderWidth: 1, borderColor: '#BEE3F8', marginBottom: 20 },
   noticeHeaderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
   noticeCardTitleText: { fontSize: 13, fontWeight: '700', color: '#2B6CB0' },
   noticeCardBodyText: { fontSize: 12, color: '#2C5282', lineHeight: 16, fontWeight: '500' },
-
-  // Bottom Interactive Action Button Styles
   masterActionButtonLauncher: { backgroundColor: '#38A169', paddingVertical: 14, borderRadius: 14, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', shadowColor: '#38A169', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.12, shadowRadius: 8, elevation: 2 },
   masterActionButtonLauncherText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' }
 });

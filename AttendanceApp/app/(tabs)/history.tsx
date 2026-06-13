@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, Text, View, ScrollView, TouchableOpacity, ActivityIndicator, Image } from 'react-native';
-import { useAuth, API_BASE_URL } from '../_layout'; // Hook into permanent cloud credentials context
+import { useAuth, API_BASE_URL } from '../_layout';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 
 interface BackendLog {
   _id: string;
@@ -13,12 +14,34 @@ interface BackendLog {
 }
 
 export default function HistoryScreen() {
-  const { currentUser } = useAuth(); // Safely access the active logged-in worker data
+  const { currentUser } = useAuth();
   const [cloudLogs, setCloudLogs] = useState<BackendLog[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
 
-  // Pull permanent historical entries from MongoDB Atlas cluster
+  // ⏱️ PARSING ENGINE TO DYNAMICALLY CALCULATE AND ACCUMULATE WORK HOURS 
+  const calculateWorkingHours = (inTime: string, outTime: string) => {
+    if (!inTime || !outTime || inTime === '--:--' || outTime === '--:--' || inTime === 'ABSENT' || outTime === 'ABSENT') {
+      return '--';
+    }
+    try {
+      const parseTimeToMinutes = (timeStr: string) => {
+        const [time, modifier] = timeStr.split(' ');
+        let [hours, minutes] = time.split(':').map(Number);
+        if (modifier === 'PM' && hours < 12) hours += 12;
+        if (modifier === 'AM' && hours === 12) hours = 0;
+        return hours * 60 + minutes;
+      };
+
+      const diffInMinutes = parseTimeToMinutes(outTime) - parseTimeToMinutes(inTime);
+      if (diffInMinutes <= 0) return '0h 0m';
+
+      return `${Math.floor(diffInMinutes / 60)}h ${diffInMinutes % 60}m`;
+    } catch (e) {
+      return '--';
+    }
+  };
+
   const fetchPermanentCloudHistory = async () => {
     if (!currentUser?.name) return;
     
@@ -36,7 +59,6 @@ export default function HistoryScreen() {
     }
   };
 
-  // Re-run the network synchronization engine automatically on load
   useEffect(() => {
     fetchPermanentCloudHistory();
   }, [currentUser]);
@@ -48,21 +70,25 @@ export default function HistoryScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.headerTitleRow}>
-        <Text style={styles.sectionTitle}>Attendance Logs Timeline</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <Ionicons name="time-outline" size={18} color="#1A202C" />
+          <Text style={styles.sectionTitle}>Attendance Logs Timeline</Text>
+        </View>
         <TouchableOpacity style={styles.refreshIconBtn} onPress={fetchPermanentCloudHistory}>
-          <Text style={styles.refreshIconText}>Refresh 🔄</Text>
+          <Ionicons name="refresh-outline" size={13} color="#2B6CB0" style={{ marginRight: 4 }} />
+          <Text style={styles.refreshIconText}>Refresh</Text>
         </TouchableOpacity>
       </View>
 
       {isLoading ? (
         <View style={styles.emptyContainer}>
-          <ActivityIndicator size="large" color="#007AFF" />
+          <ActivityIndicator size="small" color="#007AFF" />
           <Text style={[styles.emptyText, { marginTop: 10 }]}>Syncing with cloud database...</Text>
         </View>
       ) : cloudLogs.length === 0 ? (
         <View style={styles.emptyContainer}>
           <View style={styles.emptyIconCircle}>
-            <Text style={{ fontSize: 32 }}>📅</Text>
+            <Ionicons name="calendar-outline" size={24} color="#718096" />
           </View>
           <Text style={styles.emptyText}>No active history logs available.</Text>
         </View>
@@ -85,32 +111,37 @@ export default function HistoryScreen() {
                   ]}
                   onPress={() => handleToggleDrawer(item._id)}
                 >
-                  {/* Day and Date Header Summary */}
                   <View style={styles.dayHeader}>
                     <View>
-                      <Text style={[styles.dayText, isAbsent && { color: '#C53030' }]}>{item.dayOfWeek}</Text>
+                      <Text style={[styles.dayText, isAbsent && { color: '#E53E3E' }]}>{item.dayOfWeek}</Text>
                       <Text style={styles.dateText}>{item.date}</Text>
                     </View>
                     {(hasInPhoto || hasOutPhoto) && !isAbsent && (
                       <View style={styles.photoLoggedBadge}>
-                        <Text style={styles.photoLoggedBadgeText}>📸 Photos Logged</Text>
+                        <Ionicons name="camera" size={11} color="#007AFF" style={{ marginRight: 3 }} />
+                        <Text style={styles.photoLoggedBadgeText}>Photos Logged</Text>
                       </View>
                     )}
                   </View>
 
-                  {/* Verified Punch In / Punch Out Metadata Box */}
                   <View style={styles.punchRow}>
-                    {/* Punch In */}
+                    {/* ⏱️ INTEGRATED ACCUMULATED SHIFT HOURS DISPLAY UNIT */}
+                    <View style={[styles.punchItem, { backgroundColor: '#F0FDF4', borderColor: '#DCFCE7' }, isAbsent && { backgroundColor: '#FFF5F5', borderColor: '#FED7D7' }]}>
+                      <Text style={[styles.punchLabel, { color: '#16A34A' }, isAbsent && { color: '#E53E3E' }]}>DURATION</Text>
+                      <Text style={[styles.punchTime, { color: '#15803D' }, isAbsent && { color: '#E53E3E' }]}>
+                        {calculateWorkingHours(item.loginTime, item.logoutTime)}
+                      </Text>
+                    </View>
+
                     <View style={[styles.punchItem, isAbsent && styles.punchItemAbsent]}>
-                      <Text style={styles.punchLabel}>📥 Punch In</Text>
+                      <Text style={styles.punchLabel}>PUNCH IN</Text>
                       <Text style={[styles.punchTime, item.loginTime === 'ABSENT' ? styles.absentColor : item.loginTime !== '--:--' ? styles.loginColor : styles.emptyColor]}>
                         {item.loginTime}
                       </Text>
                     </View>
 
-                    {/* Punch Out */}
                     <View style={[styles.punchItem, isAbsent && styles.punchItemAbsent]}>
-                      <Text style={styles.punchLabel}>📤 Punch Out</Text>
+                      <Text style={styles.punchLabel}>PUNCH OUT</Text>
                       <Text style={[styles.punchTime, item.logoutTime === 'ABSENT' ? styles.absentColor : item.logoutTime !== '--:--' ? styles.logoutColor : styles.emptyColor]}>
                         {item.logoutTime}
                       </Text>
@@ -118,36 +149,35 @@ export default function HistoryScreen() {
                   </View>
 
                   {(hasInPhoto || hasOutPhoto) && !isExpanded && !isAbsent && (
-                    <Text style={styles.expandTipText}>Tap record card to inspect compliance captures ▼</Text>
+                    <Text style={styles.expandTipText}>Tap card to inspect compliance captures ▼</Text>
                   )}
                 </TouchableOpacity>
 
-                {/* Expandable Dual Photo Drawer Layout */}
                 {isExpanded && !isAbsent && (
                   <View style={styles.photoDrawerContainer}>
                     <Text style={styles.drawerLabelTitle}>Biometric Verification Snapshots:</Text>
                     <View style={styles.photoGridRow}>
                       
-                      {/* Punch In Image Block */}
                       <View style={styles.photoBlock}>
                         <Text style={styles.photoGridLabel}>📥 Punch In Capture:</Text>
                         {hasInPhoto ? (
                           <Image source={{ uri: item.capturedPhotoInUri }} style={styles.drawerSelfiePreviewImage} />
                         ) : (
                           <View style={styles.noImageDashedPlaceholder}>
-                            <Text style={styles.noImagePlaceholderText}>No Punch In Photo</Text>
+                            <Ionicons name="image-outline" size={20} color="#A0AEC0" style={{ marginBottom: 4 }} />
+                            <Text style={styles.noImagePlaceholderText}>No Photo Saved</Text>
                           </View>
                         )}
                       </View>
 
-                      {/* Punch Out Image Block */}
                       <View style={{ width: '48%' }}>
                         <Text style={styles.photoGridLabel}>📤 Punch Out Capture:</Text>
                         {hasOutPhoto ? (
                           <Image source={{ uri: item.capturedPhotoOutUri }} style={styles.drawerSelfiePreviewImage} />
                         ) : (
                           <View style={styles.noImageDashedPlaceholder}>
-                            <Text style={styles.noImagePlaceholderText}>No Punch Out Photo</Text>
+                            <Ionicons name="image-outline" size={20} color="#A0AEC0" style={{ marginBottom: 4 }} />
+                            <Text style={styles.noImagePlaceholderText}>No Photo Saved</Text>
                           </View>
                         )}
                       </View>
@@ -165,28 +195,28 @@ export default function HistoryScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F4F7FA', paddingHorizontal: 16, paddingTop: 15 },
-  headerTitleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 },
-  sectionTitle: { fontSize: 16, fontWeight: '700', color: '#1A202C', letterSpacing: 0.2 },
-  refreshIconBtn: { backgroundColor: '#EBF8FF', borderWidth: 1, borderColor: '#BEE3F8', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
-  refreshIconText: { color: '#2B6CB0', fontSize: 12, fontWeight: '700' },
+  container: { flex: 1, backgroundColor: '#F8FAFC', paddingHorizontal: 16, paddingTop: 20 },
+  headerTitleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  sectionTitle: { fontSize: 14, fontWeight: '800', color: '#1A202C', marginLeft: 6, textTransform: 'uppercase', letterSpacing: 0.3 },
+  refreshIconBtn: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E2E8F0', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 10, flexDirection: 'row', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.01, shadowRadius: 2, elevation: 1 },
+  refreshIconText: { color: '#4A5568', fontSize: 11, fontWeight: '700' },
   
-  dayGroupCardWrapper: { marginBottom: 12 },
-  dayGroupCard: { backgroundColor: '#FFFFFF', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.02, shadowRadius: 10, elevation: 2 },
-  dayGroupCardExpanded: { borderBottomLeftRadius: 0, borderBottomRightRadius: 0, borderBottomWidth: 0, borderColor: '#CBD5E0' },
+  dayGroupCardWrapper: { marginBottom: 10 },
+  dayGroupCard: { backgroundColor: '#FFFFFF', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.01, shadowRadius: 4, elevation: 1 },
+  dayGroupCardExpanded: { borderBottomLeftRadius: 0, borderBottomRightRadius: 0, borderBottomWidth: 0, borderColor: '#CBD5E0', shadowOpacity: 0, elevation: 0 },
   dayGroupCardAbsent: { backgroundColor: '#FFF5F5', borderColor: '#FED7D7' },
   
   dayHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', borderBottomWidth: 1, borderBottomColor: '#EDF2F7', paddingBottom: 10, marginBottom: 12 },
-  dayText: { fontSize: 16, fontWeight: '800', color: '#2B6CB0' },
+  dayText: { fontSize: 14, fontWeight: '800', color: '#007AFF' },
   dateText: { fontSize: 12, fontWeight: '600', color: '#A0AEC0', marginTop: 1 },
-  photoLoggedBadge: { backgroundColor: '#EBF8FF', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, borderWidth: 1, borderColor: '#BEE3F8' },
-  photoLoggedBadgeText: { color: '#2B6CB0', fontSize: 10, fontWeight: '700' },
+  photoLoggedBadge: { backgroundColor: '#EBF4FF', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, borderWidth: 1, borderColor: '#BEE3F8', flexDirection: 'row', alignItems: 'center' },
+  photoLoggedBadgeText: { color: '#007AFF', fontSize: 10, fontWeight: '700' },
   
   punchRow: { flexDirection: 'row', justifyContent: 'space-between', width: '100%' },
-  punchItem: { width: '48%', backgroundColor: '#F7FAFC', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0' },
+  punchItem: { width: '31.5%', backgroundColor: '#F7FAFC', padding: 8, borderRadius: 10, borderWidth: 1, borderColor: '#E2E8F0', alignItems: 'center' },
   punchItemAbsent: { backgroundColor: '#FFF5F5', borderColor: '#FED7D7' },
-  punchLabel: { fontSize: 11, fontWeight: '700', color: '#718096', marginBottom: 4 },
-  punchTime: { fontSize: 14, fontWeight: '800' },
+  punchLabel: { fontSize: 9, fontWeight: '800', color: '#A0AEC0', marginBottom: 4 },
+  punchTime: { fontSize: 12, fontWeight: '800' },
   
   loginColor: { color: '#38A169' },
   logoutColor: { color: '#4A5568' },
@@ -194,17 +224,16 @@ const styles = StyleSheet.create({
   emptyColor: { color: '#A0AEC0', fontWeight: '400' },
   expandTipText: { fontSize: 10, color: '#A0AEC0', fontWeight: '600', textAlign: 'center', marginTop: 10, letterSpacing: 0.1 },
   
-  // Expandable Drawer Styles
-  photoDrawerContainer: { backgroundColor: '#F8FAFC', borderBottomLeftRadius: 16, borderBottomRightRadius: 16, borderWidth: 1, borderColor: '#CBD5E0', padding: 14, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.02, shadowRadius: 5 },
-  drawerLabelTitle: { fontSize: 11, fontWeight: '800', color: '#4A5568', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 10 },
+  photoDrawerContainer: { backgroundColor: '#F8FAFC', borderBottomLeftRadius: 16, borderBottomRightRadius: 16, borderWidth: 1, borderColor: '#CBD5E0', padding: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.01, shadowRadius: 4, elevation: 1 },
+  drawerLabelTitle: { fontSize: 11, fontWeight: '800', color: '#718096', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 10 },
   photoGridRow: { flexDirection: 'row', justifyContent: 'space-between', width: '100%' },
   photoBlock: { width: '48%' },
   photoGridLabel: { fontSize: 10, fontWeight: '700', color: '#718096', marginBottom: 4 },
-  drawerSelfiePreviewImage: { width: '100%', height: 150, borderRadius: 12, backgroundColor: '#EDF2F7', resizeMode: 'cover' },
-  noImageDashedPlaceholder: { width: '100%', height: 150, backgroundColor: '#FFFFFF', borderRadius: 12, borderWidth: 1, borderStyle: 'dashed', borderColor: '#CBD5E0', justifyContent: 'center', alignItems: 'center' },
+  drawerSelfiePreviewImage: { width: '100%', height: 140, borderRadius: 10, backgroundColor: '#EDF2F7', resizeMode: 'cover' },
+  noImageDashedPlaceholder: { width: '100%', paddingVertical: 36, backgroundColor: '#FFFFFF', borderRadius: 10, borderWidth: 1, borderStyle: 'dashed', borderColor: '#CBD5E0', justifyContent: 'center', alignItems: 'center' },
   noImagePlaceholderText: { color: '#A0AEC0', fontSize: 11, fontWeight: '600', fontStyle: 'italic' },
   
-  emptyContainer: { flex: 0.8, justifyContent: 'center', alignItems: 'center' },
-  emptyIconCircle: { width: 60, height: 60, borderRadius: 30, backgroundColor: '#EDF2F7', justifyContent: 'center', alignItems: 'center', marginBottom: 10 },
-  emptyText: { color: '#718096', fontSize: 15, fontWeight: '600' }
+  emptyContainer: { flex: 0.8, justifyContent: 'center', alignItems: 'center', minHeight: 300 },
+  emptyIconCircle: { width: 54, height: 54, borderRadius: 27, backgroundColor: '#EDF2F7', justifyContent: 'center', alignItems: 'center', marginBottom: 10 },
+  emptyText: { color: '#718096', fontSize: 14, fontWeight: '600' }
 });

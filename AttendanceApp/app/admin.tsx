@@ -57,6 +57,29 @@ export default function AdminScreen() {
     'July', 'August', 'September', 'October', 'November', 'December'
   ];
 
+  // ⏱️ CENTRAL PARSING ENGINE TO CALCULATE WORK HOURS ON THE FLY
+  const calculateWorkingHours = (inTime: string, outTime: string) => {
+    if (!inTime || !outTime || inTime === '--:--' || outTime === '--:--' || inTime === 'ABSENT' || outTime === 'ABSENT') {
+      return '--';
+    }
+    try {
+      const parseTimeToMinutes = (timeStr: string) => {
+        const [time, modifier] = timeStr.split(' ');
+        let [hours, minutes] = time.split(':').map(Number);
+        if (modifier === 'PM' && hours < 12) hours += 12;
+        if (modifier === 'AM' && hours === 12) hours = 0;
+        return hours * 60 + minutes;
+      };
+
+      const diffInMinutes = parseTimeToMinutes(outTime) - parseTimeToMinutes(inTime);
+      if (diffInMinutes <= 0) return '0h 0m';
+
+      return `${Math.floor(diffInMinutes / 60)}h ${diffInMinutes % 60}m`;
+    } catch (e) {
+      return '--';
+    }
+  };
+
   const fetchEmployeesList = async () => {
     try {
       const response = await fetch(`${API_BASE_URL}/admin/employees`);
@@ -234,7 +257,8 @@ export default function AdminScreen() {
 
   const handleDownloadReport = () => {
     const currentYearString = new Date().getFullYear().toString();
-    const downloadUrl = `${API_BASE_URL}/admin/download-attendance?employeeName=${selectedEmpFilter}&month=${selectedMonthFilter}&year=${currentYearString}`;
+    // ⏱️ PASSED DYNAMIC TIME METRICS TO BACKEND EXCEL CSV ENGINE
+    const downloadUrl = `${API_BASE_URL}/admin/download-attendance?employeeName=${selectedEmpFilter}&month=${selectedMonthFilter}&year=${currentYearString}&includeWorkingHours=true`;
     Linking.openURL(downloadUrl).catch(() => {
       Alert.alert('Download Error', 'Could not connect to spreadsheet download engine.');
     });
@@ -484,6 +508,13 @@ export default function AdminScreen() {
                       </View>
                     </View>
                     <View style={styles.punchMetricsRow}>
+                      {/* ⏱️ INTEGRATED WORKING TIME DURATION BOX CONTAINER */}
+                      <View style={[styles.metricBox, { backgroundColor: '#F0FDF4', borderColor: '#DCFCE7' }]}>
+                        <Text style={[styles.metricLabel, { color: '#16A34A' }]}>HOURS WORKED</Text>
+                        <Text style={[styles.metricTime, { color: '#15803D' }]}>
+                          {calculateWorkingHours(logItem.loginTime, logItem.logoutTime)}
+                        </Text>
+                      </View>
                       <View style={[styles.metricBox, isAbsent && { borderColor: '#FEB2B2', backgroundColor: '#FFF5F5' }]}>
                         <Text style={styles.metricLabel}>PUNCH IN</Text>
                         <Text style={[styles.metricTime, isAbsent ? { color: '#E53E3E' } : { color: '#2F855A' }]}>{logItem.loginTime}</Text>
@@ -516,16 +547,13 @@ const styles = StyleSheet.create({
   statBoxSummary: { width: '48.5%', borderRadius: 16, padding: 14, borderWidth: 1, backgroundColor: '#FFFFFF', borderColor: '#E2E8F0', borderLeftWidth: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.01, shadowRadius: 4, elevation: 1 },
   statBoxNumber: { fontSize: 22, fontWeight: '800', color: '#1A202C' },
   statBoxLabel: { fontSize: 11, fontWeight: '700', color: '#718096', marginTop: 3 },
-  
   sectionHeaderRowInline: { flexDirection: 'row', alignItems: 'center', marginBottom: 8, paddingLeft: 2 },
   sectionHeadingLabelInline: { fontSize: 12, fontWeight: '800', color: '#4A5568', textTransform: 'uppercase', letterSpacing: 0.5, marginLeft: 6 },
-  
   menuToggleRow: { flexDirection: 'row', backgroundColor: '#E2E8F0', padding: 4, borderRadius: 14, marginBottom: 18 },
   menuTab: { flex: 1, paddingVertical: 12, alignItems: 'center', borderRadius: 10, flexDirection: 'row', justifyContent: 'center' },
   activeMenuTab: { backgroundColor: '#FFFFFF', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 2 },
   menuTabText: { fontSize: 12, fontWeight: '700', color: '#718096' },
   activeMenuTabText: { color: '#007AFF' },
-  
   formCard: { backgroundColor: '#FFFFFF', padding: 16, borderRadius: 16, marginBottom: 16, borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.01, shadowRadius: 4, elevation: 1 },
   cardHeaderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
   sectionHeading: { fontSize: 13, fontWeight: '800', color: '#007AFF', textTransform: 'uppercase', letterSpacing: 0.5, marginLeft: 6 },
@@ -537,7 +565,6 @@ const styles = StyleSheet.create({
   submitButtonText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700' },
   cancelEditBtn: { borderColor: '#CBD5E0', borderWidth: 1, paddingHorizontal: 16, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginLeft: 8, backgroundColor: '#FFFFFF' },
   cancelEditBtnText: { color: '#4A5568', fontSize: 13, fontWeight: '600' },
-  
   directoryCard: { backgroundColor: '#FFFFFF', paddingHorizontal: 16, borderRadius: 16, borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.01, shadowRadius: 4, elevation: 1 },
   employeeRowItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#EDF2F7' },
   avatarCircle: { width: 38, height: 38, borderRadius: 19, backgroundColor: '#EBF4FF', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#BEE3F8' },
@@ -551,21 +578,17 @@ const styles = StyleSheet.create({
   actionPillTextEdit: { color: '#2B6CB0', fontSize: 11, fontWeight: '700' },
   actionPillDelete: { backgroundColor: '#FFF5F5', borderWidth: 1, borderColor: '#FED7D7', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 },
   actionPillTextDelete: { color: '#E53E3E', fontSize: 11, fontWeight: '700' },
-  
   pillScrollFrame: { maxHeight: 44, marginBottom: 12 },
   filterPill: { backgroundColor: '#E2E8F0', paddingHorizontal: 14, justifyContent: 'center', alignItems: 'center', borderRadius: 14, marginRight: 6, height: 36, borderWidth: 1, borderColor: '#CBD5E0' },
   activeFilterPill: { backgroundColor: '#007AFF', borderColor: '#007AFF' },
   filterPillText: { fontSize: 12, color: '#4A5568', fontWeight: '700' },
   activeFilterPillText: { color: '#FFFFFF' },
-  
   monthFilterPill: { backgroundColor: '#EDF2F7', paddingHorizontal: 14, justifyContent: 'center', alignItems: 'center', borderRadius: 14, marginRight: 6, height: 36, borderWidth: 1, borderColor: '#E2E8F0' },
   activeMonthFilterPill: { backgroundColor: '#805AD5', borderColor: '#805AD5' },
   monthFilterPillText: { fontSize: 12, color: '#4A5568', fontWeight: '700' },
   activeMonthFilterPillText: { color: '#FFFFFF' },
-  
   downloadFloatingBtn: { backgroundColor: '#38A169', paddingVertical: 12, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginBottom: 16, flexDirection: 'row', shadowColor: '#38A169', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 6, elevation: 2 },
   downloadFloatingBtnText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700' },
-  
   dataLogCard: { backgroundColor: '#FFFFFF', padding: 14, borderRadius: 16, marginBottom: 10, borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.01, shadowRadius: 4, elevation: 1 },
   dataLogCardAbsent: { backgroundColor: '#FFF5F5', borderColor: '#FED7D7' },
   logCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#EDF2F7', paddingBottom: 10, marginBottom: 12 },
@@ -577,7 +600,6 @@ const styles = StyleSheet.create({
   metricBox: { flex: 1, backgroundColor: '#F7FAFC', padding: 10, borderRadius: 12, alignItems: 'center', marginHorizontal: 2, borderWidth: 1, borderColor: '#E2E8F0' },
   metricLabel: { fontSize: 9, fontWeight: '800', color: '#A0AEC0', marginBottom: 2 },
   metricTime: { fontSize: 12, fontWeight: '800' },
-  
   loaderCenterFrame: { paddingVertical: 50, alignItems: 'center', justifyContent: 'center' },
   loaderLabelSub: { color: '#718096', fontSize: 12, fontWeight: '600', marginTop: 12 },
   emptyCardFrame: { backgroundColor: '#FFFFFF', padding: 30, borderRadius: 16, alignItems: 'center', borderWidth: 1, borderColor: '#E2E8F0' },

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, Text, View, ScrollView, TouchableOpacity, ActivityIndicator, Image } from 'react-native';
 import { useAuth, API_BASE_URL } from './_layout';
+import { Ionicons } from '@expo/vector-icons';
 
 interface EmployeeProfile {
   _id: string;
@@ -15,7 +16,7 @@ interface AttendanceRecord {
   _id: string;
   employeeIdReference: string;
   employeeName: string;
-  date: string; // Expected format standard: "June 12, 2026" or "July 1, 2026"
+  date: string; 
   dayOfWeek: string;
   loginTime: string;
   logoutTime: string;
@@ -28,8 +29,7 @@ export default function AdminViewScreen() {
 
   const [selectedEmpFilter, setSelectedEmpFilter] = useState<string>('ALL');
   
-  // 🗓️ MONTH FILTER SELECTOR STATE (Defaults to current active month)
-  const currentMonthName = new Date().toLocaleDateString('en-US', { month: 'long' }); // e.g. "June"
+  const currentMonthName = new Date().toLocaleDateString('en-US', { month: 'long' }); 
   const [selectedMonthFilter, setSelectedMonthFilter] = useState<string>(currentMonthName);
   
   const [employees, setEmployees] = useState<EmployeeProfile[]>([]);
@@ -37,24 +37,54 @@ export default function AdminViewScreen() {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null); 
 
-  // List of standard months for rendering the calendar selection sub-menu
   const availableMonths = [
     'January', 'February', 'March', 'April', 'May', 'June', 
     'July', 'August', 'September', 'October', 'November', 'December'
   ];
 
-  // 🔍 COMPILING RECORDS FILTERED BY ACCOUNT IDENTITY AND SELECTED TARGET MONTH
+  // ⏱️ STABLE TYPE-SAFE WORK HOURS CALCULATOR
+  const calculateWorkingHours = (inTime: string, outTime: string) => {
+    if (!inTime || !outTime || inTime === '--:--' || outTime === '--:--' || inTime === 'ABSENT' || outTime === 'ABSENT') {
+      return '--';
+    }
+    try {
+      const parseTimeToMinutes = (timeStr: string) => {
+        const parts = timeStr.split(' ');
+        const timePart = parts[0] || '0:0';
+        const modifier = parts[1] || 'AM';
+
+        const timeSplit = timePart.split(':');
+        let hours = Number(timeSplit[0]) || 0;
+        const minutes = Number(timeSplit[1]) || 0;
+
+        if (modifier === 'PM' && hours < 12) hours += 12;
+        if (modifier === 'AM' && hours === 12) hours = 0;
+        return hours * 60 + minutes;
+      };
+
+      const diffInMinutes = parseTimeToMinutes(outTime) - parseTimeToMinutes(inTime);
+      if (diffInMinutes <= 0) return '0h 0m';
+
+      return `${Math.floor(diffInMinutes / 60)}h ${diffInMinutes % 60}m`;
+    } catch (e) {
+      return '--';
+    }
+  };
+
   const getFilteredLogs = () => {
+    const currentYearString = new Date().getFullYear().toString();
+
     return attendanceLogs.filter((log) => {
-      // Check if the log date string contains the selected month name (e.g., "June 12, 2026" contains "June")
-      const matchesMonth = log.date && log.date.toLowerCase().includes(selectedMonthFilter.toLowerCase());
-      return matchesMonth;
+      if (!log.date) return false;
+      const logDateLower = log.date.toLowerCase();
+      const matchesMonth = logDateLower.includes(selectedMonthFilter.toLowerCase());
+      const matchesYear = logDateLower.includes(currentYearString);
+      return matchesMonth && matchesYear;
     });
   };
 
   const filteredLogs = getFilteredLogs();
 
-  // 📊 CALCULATE PRESENT/ABSENT TALLIES SPECIFICALLY FOR THE ACTIVE SELECTED MONTH
   const getAttendanceMetrics = () => {
     let presentCount = 0;
     let absentCount = 0;
@@ -109,7 +139,7 @@ export default function AdminViewScreen() {
   }, [selectedEmpFilter]);
 
   useEffect(() => {
-    setExpandedLogId(null); // Close any expanded photo drawers when changing months
+    setExpandedLogId(null); 
   }, [selectedMonthFilter]);
 
   const handleToggleLogDrawer = (id: string) => {
@@ -130,11 +160,11 @@ export default function AdminViewScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* 📊 UPDATED METRICS OVERVIEW CARD ROWS (CALCULATES CURRENT SELECTION ONLY) */}
+      {/* METRICS OVERVIEW CARDS */}
       <Text style={styles.sectionHeadingLabel}>
         {selectedEmpFilter === 'ALL' 
-          ? `🌐 Global Analytics (${selectedMonthFilter})` 
-          : `👤 ${selectedEmpFilter} Summary (${selectedMonthFilter})`
+          ? `🌐 Global Analytics (${selectedMonthFilter} ${new Date().getFullYear()})` 
+          : `👤 ${selectedEmpFilter} Summary (${selectedMonthFilter} ${new Date().getFullYear()})`
         }
       </Text>
       <View style={styles.summaryGridContainer}>
@@ -158,7 +188,7 @@ export default function AdminViewScreen() {
         </View>
       </View>
 
-      {/* FILTER COHORT HORIZONTAL CAROUSEL */}
+      {/* FILTER CAROUSEL */}
       <Text style={styles.sectionHeadingLabel}>Workforce Filter Focal Point</Text>
       <View style={styles.pillScrollFrame}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -173,8 +203,8 @@ export default function AdminViewScreen() {
         </ScrollView>
       </View>
 
-      {/* 🗓️ CALENDAR MONTH SELECTION TAB STRIP BLOCK */}
-      <Text style={styles.sectionHeadingLabel}>Select Active Tracking Month</Text>
+      {/* CALENDAR MONTH SELECTION STRIP */}
+      <Text style={styles.sectionHeadingLabel}>Select Active Tracking Month ({new Date().getFullYear()})</Text>
       <View style={[styles.pillScrollFrame, { marginBottom: 14 }]}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
           {availableMonths.map((month) => (
@@ -191,8 +221,8 @@ export default function AdminViewScreen() {
         </ScrollView>
       </View>
 
-      {/* EXPANDABLE CHRONOLOGICAL LOG FEED CONTAINER */}
-      <Text style={styles.sectionHeadingLabel}>{selectedMonthFilter} Month Verification Stream</Text>
+      {/* CHRONOLOGICAL LOG FEED */}
+      <Text style={styles.sectionHeadingLabel}>{selectedMonthFilter} Verification Stream</Text>
       
       {isLoading ? (
         <View style={styles.loaderCenterFrame}>
@@ -201,7 +231,7 @@ export default function AdminViewScreen() {
         </View>
       ) : filteredLogs.length === 0 ? (
         <View style={styles.emptyCardFrame}>
-          <Text style={styles.emptyTextMessage}>No log items recorded inside {selectedMonthFilter}.</Text>
+          <Text style={styles.emptyTextMessage}>No log items recorded inside {selectedMonthFilter} {new Date().getFullYear()}.</Text>
         </View>
       ) : (
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
@@ -214,7 +244,6 @@ export default function AdminViewScreen() {
             return (
               <View key={logItem._id} style={styles.dayGroupCardWrapper}>
                 
-                {/* INTERACTIVE TAP CARD SURFACE */}
                 <TouchableOpacity
                   activeOpacity={0.75}
                   style={[
@@ -243,6 +272,14 @@ export default function AdminViewScreen() {
                   </View>
                   
                   <View style={styles.punchMetricsRow}>
+                    {/* ⏱️ TOTAL WORKING HOURS DURATION DISPLAY BOX */}
+                    <View style={[styles.metricBox, { backgroundColor: '#F0FDF4', borderColor: '#DCFCE7' }, isAbsent && { backgroundColor: '#FFF5F5', borderColor: '#FED7D7' }]}>
+                      <Text style={[styles.metricLabel, { color: '#16A34A' }, isAbsent && { color: '#E53E3E' }]}>DURATION</Text>
+                      <Text style={[styles.metricTime, { color: '#15803D' }, isAbsent && { color: '#E53E3E' }]}>
+                        {calculateWorkingHours(logItem.loginTime, logItem.logoutTime)}
+                      </Text>
+                    </View>
+
                     <View style={[styles.metricBox, isAbsent && { borderColor: '#FEB2B2', backgroundColor: '#FFF5F5' }]}>
                       <Text style={styles.metricLabel}>PUNCH IN</Text>
                       <Text style={[styles.metricTime, isAbsent ? { color: '#E53E3E' } : { color: '#2F855A' }]}>
@@ -262,13 +299,12 @@ export default function AdminViewScreen() {
                   )}
                 </TouchableOpacity>
 
-                {/* SLIDE DOWN PHOTO VERIFICATION DRAWER */}
+                {/* EXPANDABLE DUAL PHOTO DRAWER */}
                 {isExpanded && !isAbsent && (
                   <View style={styles.photoDrawerContainer}>
                     <Text style={styles.drawerLabelTitle}>Biometric Verification Snapshots:</Text>
                     <View style={styles.photoGridRow}>
                       
-                      {/* Punch In Photo Component */}
                       <View style={styles.photoBlock}>
                         <Text style={styles.photoGridLabel}>📥 Punch In Capture:</Text>
                         {hasInPhoto ? (
@@ -280,7 +316,6 @@ export default function AdminViewScreen() {
                         )}
                       </View>
 
-                      {/* Punch Out Photo Component */}
                       <View style={styles.photoBlock}>
                         <Text style={styles.photoGridLabel}>📤 Punch Out Capture:</Text>
                         {hasOutPhoto ? (
@@ -307,53 +342,42 @@ export default function AdminViewScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F4F7FA', paddingHorizontal: 16, paddingTop: 50 },
-  
   headerHeroCard: { backgroundColor: '#1A202C', padding: 20, borderRadius: 24, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
   headerInfoBlock: { flex: 1 },
   headerSubtitle: { color: '#A0AEC0', fontSize: 10, fontWeight: '800', letterSpacing: 0.8 },
   headerTitle: { color: '#FFFFFF', fontSize: 20, fontWeight: '800', marginTop: 2 },
   exitBadgeBtn: { backgroundColor: '#4A5568', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 12 },
   exitBtnText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' },
-  
   sectionHeadingLabel: { fontSize: 11, fontWeight: '800', color: '#2B6CB0', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 8, marginTop: 4, paddingLeft: 2 },
-  
-  // Analytics Counters
   summaryGridContainer: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginBottom: 14 },
   statBoxSummary: { width: '31.5%', borderRadius: 16, padding: 12, borderWidth: 1, backgroundColor: '#FFFFFF', borderColor: '#E2E8F0', borderLeftWidth: 4 },
   statBoxNumber: { fontSize: 19, fontWeight: '800', color: '#1A202C' },
   statBoxLabel: { fontSize: 9, fontWeight: '700', color: '#718096', marginTop: 3 },
-
   pillScrollFrame: { maxHeight: 44, marginBottom: 12 },
   filterPill: { backgroundColor: '#E2E8F0', paddingHorizontal: 14, justifyContent: 'center', alignItems: 'center', borderRadius: 14, marginRight: 6, height: 36, borderWidth: 1, borderColor: '#CBD5E0' },
   activeFilterPill: { backgroundColor: '#007AFF', borderColor: '#007AFF' },
   filterPillText: { fontSize: 12, color: '#4A5568', fontWeight: '700' },
   activeFilterPillText: { color: '#FFFFFF' },
-
-  // 🗓️ Month Selector Custom Styles
   monthFilterPill: { backgroundColor: '#EDF2F7', paddingHorizontal: 14, justifyContent: 'center', alignItems: 'center', borderRadius: 14, marginRight: 6, height: 36, borderWidth: 1, borderColor: '#E2E8F0' },
   activeMonthFilterPill: { backgroundColor: '#805AD5', borderColor: '#805AD5' },
   monthFilterPillText: { fontSize: 12, color: '#4A5568', fontWeight: '700' },
   activeMonthFilterPillText: { color: '#FFFFFF' },
-  
   dayGroupCardWrapper: { marginBottom: 12 },
-  dataLogCard: { backgroundColor: '#FFFFFF', padding: 16, borderRadius: 20, borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.01, shadowRadius: 5 },
+  dataLogCard: { backgroundColor: '#FFFFFF', padding: 14, borderRadius: 20, borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.01, shadowRadius: 5 },
   dataLogCardExpanded: { borderBottomLeftRadius: 0, borderBottomRightRadius: 0, borderBottomWidth: 0, borderColor: '#CBD5E0' },
   dataLogCardAbsent: { backgroundColor: '#FFF5F5', borderColor: '#FED7D7' },
-  
   logCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', borderBottomWidth: 1, borderBottomColor: '#EDF2F7', paddingBottom: 10, marginBottom: 12 },
-  logEmployeeIdentity: { fontSize: 15, fontWeight: '800', color: '#2D3748' },
+  logEmployeeIdentity: { fontSize: 14, fontWeight: '800', color: '#2D3748' },
   logEmployeeIdSub: { fontSize: 11, fontWeight: '600', color: '#A0AEC0', marginTop: 1 },
   dateBadge: { backgroundColor: '#F7FAFC', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 10, borderWidth: 1, borderColor: '#E2E8F0' },
   dateBadgeText: { fontSize: 11, color: '#4A5568', fontWeight: '700' },
   photoLoggedBadge: { backgroundColor: '#EBF8FF', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, borderWidth: 1, borderColor: '#BEE3F8', marginTop: 4, alignSelf: 'flex-end' },
   photoLoggedBadgeText: { color: '#2B6CB0', fontSize: 9, fontWeight: '700' },
-  
   punchMetricsRow: { flexDirection: 'row', justifyContent: 'space-between' },
   metricBox: { flex: 1, backgroundColor: '#F7FAFC', padding: 10, borderRadius: 12, alignItems: 'center', marginHorizontal: 2, borderWidth: 1, borderColor: '#E2E8F0' },
   metricLabel: { fontSize: 9, fontWeight: '800', color: '#A0AEC0', marginBottom: 2 },
-  metricTime: { fontSize: 13, fontWeight: '800' },
+  metricTime: { fontSize: 12, fontWeight: '800' },
   expandTipText: { fontSize: 10, color: '#A0AEC0', fontWeight: '600', textAlign: 'center', marginTop: 10, letterSpacing: 0.1 },
-  
   photoDrawerContainer: { backgroundColor: '#F8FAFC', borderBottomLeftRadius: 20, borderBottomRightRadius: 20, borderWidth: 1, borderColor: '#CBD5E0', padding: 14 },
   drawerLabelTitle: { fontSize: 11, fontWeight: '800', color: '#4A5568', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 10 },
   photoGridRow: { flexDirection: 'row', justifyContent: 'space-between', width: '100%' },
@@ -362,7 +386,6 @@ const styles = StyleSheet.create({
   drawerSelfiePreviewImage: { width: '100%', height: 140, borderRadius: 12, backgroundColor: '#EDF2F7', resizeMode: 'cover' },
   noImageDashedPlaceholder: { width: '100%', height: 140, backgroundColor: '#FFFFFF', borderRadius: 12, borderWidth: 1, borderStyle: 'dashed', borderColor: '#CBD5E0', justifyContent: 'center', alignItems: 'center' },
   noImagePlaceholderText: { color: '#A0AEC0', fontSize: 11, fontWeight: '600', fontStyle: 'italic' },
-  
   loaderCenterFrame: { paddingVertical: 50, alignItems: 'center', justifyContent: 'center' },
   loaderLabelSub: { color: '#718096', fontSize: 13, fontWeight: '600', marginTop: 12 },
   emptyCardFrame: { backgroundColor: '#FFFFFF', padding: 30, borderRadius: 20, alignItems: 'center', borderWidth: 1, borderColor: '#E2E8F0' },
