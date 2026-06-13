@@ -2,7 +2,8 @@ import React, { useState, createContext, useContext, useEffect } from 'react';
 import { Slot, useRouter, useSegments } from 'expo-router';
 import { AttendanceProvider } from '@/constants/AttendanceContext';
 
-export const API_BASE_URL = 'http://192.168.1.10:5000/api';
+// 🌐 Global Production Cloud URL for your hosted Render Web Service API
+export const API_BASE_URL = 'https://employeeattendance-1iiy.onrender.com/api';
 
 interface AuthContextType {
   isAuthenticated: boolean;

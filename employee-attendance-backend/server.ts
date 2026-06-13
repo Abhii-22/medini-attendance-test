@@ -191,8 +191,9 @@ app.get('/api/admin/download-attendance', async (req: Request, res: Response): P
       csvData += `"${row.employeeName}","${row.employeeIdReference}","${row.date}","${row.dayOfWeek}","${row.loginTime}","${row.logoutTime}","${workingHours}"\n`;
     });
 
+    // ⏱️ Production timezone lock applied to download name tracking dependencies
     const filePrefixMonth = filterMonth || 'Global';
-    const filePrefixYear = filterYear || new Date().getFullYear().toString();
+    const filePrefixYear = filterYear || new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata', year: 'numeric' });
 
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename=Attendance_Report_${filePrefixMonth}_${filePrefixYear}.csv`);
@@ -209,10 +210,11 @@ app.get('/api/admin/download-attendance', async (req: Request, res: Response): P
 app.post('/api/attendance/punch-clock', async (req: Request, res: Response): Promise<any> => {
   const { employeeId, name, type, photoUri } = req.body; 
   
+  // ⏱️ FIXED: Hardcoded 'Asia/Kolkata' timezone variables to lock server parameters to IST
   const now = new Date();
-  const formattedDate = now.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-  const formattedDay = now.toLocaleDateString('en-US', { weekday: 'long' });
-  const formattedTime = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+  const formattedDate = now.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'Asia/Kolkata' });
+  const formattedDay = now.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'Asia/Kolkata' });
+  const formattedTime = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' });
 
   try {
     let dayLog = await AttendanceShiftLog.findOne({ employeeIdReference: String(employeeId), date: formattedDate });
