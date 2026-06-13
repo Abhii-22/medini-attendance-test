@@ -28,7 +28,22 @@ const ShiftLogSchema = new Schema({
 }, { timestamps: true });
 
 // ----------------------------------------------------
+// 3. SEPARATE INDEPENDENT MASTER ADMIN CREDENTIAL SCHEMA
+// ----------------------------------------------------
+const AdminCredentialSchema = new Schema({
+  name: { type: String, required: true },
+  employeeId: { type: String, required: true, unique: true, uppercase: true, trim: true },
+  designation: { type: String, required: true },
+  email: { type: String, required: true, unique: true, lowercase: true, trim: true },
+  password: { type: String, required: true },
+  // Enforces a strict fallback string matching the backend validation requirements
+  role: { type: String, default: 'MASTER' }
+}, { timestamps: true });
+
+// ----------------------------------------------------
 // MODEL EXPORTS
 // ----------------------------------------------------
 export const RegisteredEmployee = mongoose.model('RegisteredEmployee', EmployeeProfileSchema);
 export const AttendanceShiftLog = mongoose.model('AttendanceShiftLog', ShiftLogSchema);
+// 👑 Exporting the new collection model wrapper for the separate Master Admin structure
+export const AdminCredential = mongoose.model('AdminCredential', AdminCredentialSchema);

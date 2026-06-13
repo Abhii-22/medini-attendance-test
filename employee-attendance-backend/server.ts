@@ -2,42 +2,54 @@ import express, { type Request, type Response } from 'express';
 import mongoose from 'mongoose';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { RegisteredEmployee, AttendanceShiftLog } from './models/AttendanceSchemas.js'; 
+// 📜 Imported the separate AdminCredential model safely from your updated schemas file
+import { RegisteredEmployee, AttendanceShiftLog, AdminCredential } from './models/AttendanceSchemas.js'; 
 
 dotenv.config();
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-process.on('unhandledRejection', (reason) => {
-  console.error('🛡️ Intercepted Thread Rejection:', reason);
+process.on('unhandledRejection', (reason: any) => {
+  console.error('\n🛡️ Intercepted Background Rejection:');
+  console.error(reason?.message || String(reason));
+  console.error('=========================================\n');
 });
 
 // ----------------------------------------------------
-// 1. FIXED MULTI-ROLE GATEWAY AUTHENTICATION ENDPOINT
+// 1. SEPARATED DATABASE-DRIVEN AUTHENTICATION ENDPOINT
 // ----------------------------------------------------
 app.post('/api/auth/login', async (req: Request, res: Response): Promise<any> => {
   const { email, password, loginMode } = req.body;
 
-  // 👑 MASTER CODENAME PRIVILEGE BYPASSER (Super Admin Key Only)
-  if (loginMode === 'ADMIN_PANEL' || loginMode === 'ADMIN') {
-    if (String(email).toLowerCase() === 'admin@medini.com' && String(password) === 'Admin@2026') {
-      return res.status(200).json({ success: true, isAdmin: true, user: { name: 'System Admin', email, role: 'MASTER' } });
-    }
-    return res.status(401).json({ success: false, message: 'Invalid Super Admin master credentials.' });
-  }
-
-  // 👤 & 👁️ DATABASE LOOKUP PATHWAY FOR EMPLOYEES AND SUPERVISORS
   try {
-    const userProfile = await RegisteredEmployee.findOne({ email: String(email).toLowerCase() });
+    const searchEmail = String(email).toLowerCase();
+
+    // 👑 SEPARATED PATHWAY: If logging into an Admin Panel, check ONLY the AdminCredential collection
+    if (loginMode === 'ADMIN_PANEL' || loginMode === 'ADMIN') {
+      const adminProfile = await AdminCredential.findOne({ email: searchEmail });
+      
+      if (!adminProfile || adminProfile.password !== password) {
+        return res.status(401).json({ success: false, message: 'No matching admin profile or incorrect password.' });
+      }
+
+      if (adminProfile.role === 'MASTER') {
+        return res.status(200).json({ success: true, isAdmin: true, user: adminProfile });
+      }
+      return res.status(403).json({ success: false, message: 'This account lacks Master Admin privileges.' });
+    }
+
+    // 👤 & 👁️ STANDARD PATHWAY: Supervisors and normal workforce read from RegisteredEmployee collection
+    const userProfile = await RegisteredEmployee.findOne({ email: searchEmail });
     
     if (!userProfile || userProfile.password !== password) {
       return res.status(401).json({ success: false, message: 'No matching profile or incorrect password.' });
     }
 
-    // 👁️ ADMIN VIEW LOGINS READ DIRECTLY FROM DATABASE CLUSTER CREATED BY MASTER
+    const accountRole = userProfile.role as string;
+
     if (loginMode === 'ADMIN_VIEW') {
-      if (userProfile.role === 'ADMIN_VIEW') {
+      if (accountRole === 'ADMIN_VIEW') {
         return res.status(200).json({ success: true, isAdmin: true, user: userProfile });
       }
       return res.status(403).json({ success: false, message: 'This account lacks supervisor monitoring access privileges.' });
@@ -136,7 +148,6 @@ app.get('/api/admin/download-attendance', async (req: Request, res: Response): P
     const queryFilter = employeeName !== 'ALL' ? { employeeName } : {};
     const records = await AttendanceShiftLog.find(queryFilter).sort({ date: -1 });
 
-    // ⏱️ STABLE PARSING LOGIC WITH TYPESAFE ARRAY BOUNDARY CHECKS
     const calculateServerWorkingHours = (inTime: string, outTime: string): string => {
       if (!inTime || !outTime || inTime === '--:--' || outTime === '--:--' || inTime === 'ABSENT' || outTime === 'ABSENT') {
         return '--';
@@ -290,9 +301,9 @@ async function bootServerEngine() {
       app.listen(5000, () => console.log('Attendance Server Live On Port 5000 🚀'));
     })
     .catch((err) => {
-      console.error('\n❌ CRITICAL INITIALIZATION ERROR DETECTED ON SYSTEM ROOT:');
+      console.error('\n❌ CRITICAL DATABASE INITIALIZATION ERROR DETECTED:');
       console.error('================================================================');
-      console.error(err);
+      console.error(err.message || err);
       console.error('================================================================\n');
     });
 }
