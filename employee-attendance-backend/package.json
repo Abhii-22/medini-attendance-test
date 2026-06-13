@@ -6,6 +6,8 @@
   "type": "module",
   "scripts": {
     "dev": "nodemon --exec \"node --no-warnings=ExperimentalWarning --loader ts-node/esm\" server.ts",
+    "build": "tsc",
+    "start": "node server.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
