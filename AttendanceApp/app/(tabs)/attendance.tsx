@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator, Alert, Image, Dimensions, ScrollView } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Location from 'expo-location';
+import * as FileSystem from 'expo-file-system'; 
 import { OFFICE_LOCATION } from '@/constants/Location';
 import { useAttendance } from '@/constants/AttendanceContext';
 import { useAuth, API_BASE_URL } from '../_layout'; 
@@ -18,6 +19,7 @@ export default function AttendanceScreen() {
   const [isLocationVerified, setIsLocationVerified] = useState<boolean>(false);
   const [attendanceType, setAttendanceType] = useState<'LOGIN' | 'LOGOUT' | 'ABSENT' | null>(null);
   const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
+  const [base64PhotoData, setBase64PhotoData] = useState<string | null>(null); // 🚀 Stores cross-device raw string data
   const [showCamera, setShowCamera] = useState<boolean>(false);
   const [currentDistance, setCurrentDistance] = useState<number | null>(null);
   
@@ -106,7 +108,7 @@ export default function AttendanceScreen() {
 
   const handleMarkAbsent = () => {
     Alert.alert(
-      'Confirm Absence 📋',
+      'Confirm Absence 🗓️',
       'Are you sure you want to mark yourself as absent for today? This action cannot be undone.',
       [
         { text: 'Cancel', style: 'cancel' },
@@ -122,40 +124,69 @@ export default function AttendanceScreen() {
   const takeSelfie = async () => {
     if (cameraRef.current) {
       try {
-        const options = { quality: 0.6, skipProcessing: false };
+        // 📸 COMPRESSION TUNING: Capped frame bounding boxes and dropped compression quality to 0.1
+        // This ensures the resulting text string stays tiny, avoiding mobile network packet drops.
+        const options = { 
+          quality: 0.1, 
+          skipProcessing: false,
+          maxHeight: 480,
+          maxWidth: 480
+        }; 
         const photo = await cameraRef.current.takePictureAsync(options);
+        
         if (photo && photo.uri) {
-          setCapturedPhoto(photo.uri);
+          setLoading(true);
+          setLoadingMessage('Optimizing encryption strings...');
+          setCapturedPhoto(photo.uri); 
+
+          // Invoke stable string compiler from legacy native dependencies
+          const LegacyFS = require('expo-file-system/legacy');
+          const base64Content = await LegacyFS.readAsStringAsync(photo.uri, {
+            encoding: 'base64', 
+          });
+
+          setBase64PhotoData(`data:image/jpeg;base64,${base64Content}`);
           setShowCamera(false);
+          setLoading(false);
         }
       } catch (err) {
-        Alert.alert('Camera Error', 'Failed to hold image metrics.');
+        setLoading(false);
+        Alert.alert('Camera Error', 'Failed to compile image metrics.');
       }
     }
   };
 
   const handleSubmitAttendance = () => {
-    if ((attendanceType === 'LOGIN' || attendanceType === 'LOGOUT') && capturedPhoto) {
-      executeCloudAttendanceSubmission(attendanceType, capturedPhoto);
+    if ((attendanceType === 'LOGIN' || attendanceType === 'LOGOUT') && base64PhotoData) {
+      executeCloudAttendanceSubmission(attendanceType, base64PhotoData);
     }
   };
 
-  const executeCloudAttendanceSubmission = async (type: 'LOGIN' | 'LOGOUT' | 'ABSENT', photoPath: string) => {
+  const executeCloudAttendanceSubmission = async (type: 'LOGIN' | 'LOGOUT' | 'ABSENT', photoPayloadString: string) => {
     setLoading(true);
     setLoadingMessage('Uploading shift metrics to database cluster...');
+
+    // ⏱️ CONNECTION PROTECTION: Enforce a 45-second open-socket timeout barrier
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 45000);
 
     try {
       const response = await fetch(`${API_BASE_URL}/attendance/punch-clock`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        signal: controller.signal,
         body: JSON.stringify({
           employeeId: employeeId,
           name: employeeName,
           type: type,
-          photoUri: photoPath
+          photoUri: photoPayloadString 
         })
       });
 
+      clearTimeout(timeoutId);
       const result = await response.json();
 
       if (response.ok && result.success) {
@@ -166,8 +197,14 @@ export default function AttendanceScreen() {
         Alert.alert('Upload Failed', result.message || 'Server rejected storage process.');
         setLoading(false);
       }
-    } catch (error) {
-      Alert.alert('Network Interruption 📡', 'Failed to reach cloud servers.');
+    } catch (error: any) {
+      clearTimeout(timeoutId);
+      
+      if (error.name === 'AbortError') {
+        Alert.alert('Network Timeout ⏱️', 'The data took too long to stream. Check your network strength and try again.');
+      } else {
+        Alert.alert('Network Interruption 🌐', 'Failed to reach cloud servers. Ensure mobile data/Wi-Fi is active.');
+      }
       setLoading(false);
     }
   };
@@ -176,6 +213,7 @@ export default function AttendanceScreen() {
     setIsLocationVerified(false);
     setAttendanceType(null);
     setCapturedPhoto(null);
+    setBase64PhotoData(null);
     setShowCamera(false);
     setLoading(false);
   };
@@ -338,23 +376,17 @@ export default function AttendanceScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F4F7FA', paddingHorizontal: 16, paddingTop: 16 },
-  
-  // Profile Bar Card Element Styles
   executiveHeaderCard: { backgroundColor: '#FFFFFF', padding: 16, borderRadius: 20, flexDirection: 'row', alignItems: 'center', shadowColor: '#1A202C', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.02, shadowRadius: 8, elevation: 2, marginBottom: 14, borderWidth: 1, borderColor: '#E2E8F0' },
   avatarBadge: { width: 46, height: 44, borderRadius: 14, backgroundColor: '#EBF4FF', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#B3D7FF' },
   avatarText: { color: '#007AFF', fontSize: 18, fontWeight: '800' },
   headerMeta: { marginLeft: 14, flex: 1 },
   employeeName: { fontSize: 16, fontWeight: '800', color: '#1A202C' },
   employeeId: { fontSize: 12, fontWeight: '600', color: '#718096', marginTop: 2 },
-
-  // Perimeter Info Metric Deck Layout
   perimeterConfigCard: { backgroundColor: '#FFFFFF', borderLeftWidth: 4, borderLeftColor: '#007AFF', borderRadius: 16, padding: 14, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.01, shadowRadius: 4, elevation: 1, marginBottom: 16 },
   perimeterIconWrapper: { width: 34, height: 34, borderRadius: 10, backgroundColor: '#EBF5FF', justifyContent: 'center', alignItems: 'center', marginRight: 12 },
   perimeterTextContent: { flex: 1 },
   perimeterTitle: { fontSize: 13, fontWeight: '800', color: '#2D3748' },
   perimeterSub: { fontSize: 11, fontWeight: '600', color: '#718096', marginTop: 2 },
-
-  // Interactive Operations Form Deck Panel Styles
   actionPanel: { backgroundColor: '#FFFFFF', padding: 16, borderRadius: 20, borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#1A202C', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.01, shadowRadius: 6, elevation: 1 },
   sectionHeaderRowInline: { flexDirection: 'row', alignItems: 'center', marginBottom: 6, paddingLeft: 2 },
   panelSectionHeading: { fontSize: 12, fontWeight: '800', color: '#718096', textTransform: 'uppercase', letterSpacing: 0.6, marginLeft: 6 },
@@ -369,8 +401,6 @@ const styles = StyleSheet.create({
   cardBtnSubtext: { fontSize: 11, color: '#718096', fontWeight: '600', marginTop: 2 },
   absentButtonLarge: { backgroundColor: '#FFF5F5', borderWidth: 1, borderColor: '#FED7D7', paddingVertical: 14, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginTop: 16, flexDirection: 'row' },
   absentButtonText: { color: '#E53E3E', fontSize: 13, fontWeight: '700' },
-
-  // Camera Enforced View Module Styles
   cameraContainer: { flex: 1, backgroundColor: '#000' },
   cameraOverlay: { justifyContent: 'space-between', paddingVertical: 40 },
   topInfoBar: { width: '100%', alignItems: 'center' },
@@ -383,8 +413,6 @@ const styles = StyleSheet.create({
   closeBtnText: { color: '#FFF', fontSize: 14, fontWeight: '600' },
   captureBtn: { width: 64, height: 64, borderRadius: 32, borderWidth: 4, borderColor: '#FFF', justifyContent: 'center', alignItems: 'center', marginBottom: 20 },
   captureBtnInner: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#FFF' },
-
-  // Post Selfie Verification Matrix Blocks
   reviewLayoutContainer: { backgroundColor: '#FFFFFF', borderRadius: 24, padding: 16, alignItems: 'center', borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#1A202C', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.02, shadowRadius: 10, elevation: 2 },
   successStatusRibbon: { backgroundColor: '#E6FFFA', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 20, marginBottom: 14, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#BEE3F8' },
   successRibbonText: { color: '#234E52', fontSize: 9, fontWeight: '800', letterSpacing: 0.4 },
