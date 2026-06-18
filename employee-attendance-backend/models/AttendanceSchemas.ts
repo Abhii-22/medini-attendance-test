@@ -1,7 +1,7 @@
 import mongoose, { Schema } from 'mongoose';
 
 // ----------------------------------------------------
-// 1. CORE EMPLOYEE REGISTRY SCHEMA WITH ROLE SUPPORT
+// 1. CORE EMPLOYEE REGISTRY SCHEMA WITH MULTI-ROLE ARRAY SUPPORT
 // ----------------------------------------------------
 const EmployeeProfileSchema = new Schema({
   name: { type: String, required: true },
@@ -9,8 +9,8 @@ const EmployeeProfileSchema = new Schema({
   designation: { type: String, required: true },
   email: { type: String, required: true, unique: true, lowercase: true, trim: true },
   password: { type: String, required: true },
-  // 🚀 Differentiates regular workforce members from Read-Only supervisors
-  role: { type: String, enum: ['EMPLOYEE', 'ADMIN_VIEW'], default: 'EMPLOYEE' }
+  // 🚀 FIXED: Modified collection validator rule definition to natively accept arrays of matching strings
+  role: { type: [String], default: ['EMPLOYEE'] }
 }, { timestamps: true });
 
 // ----------------------------------------------------
@@ -36,7 +36,6 @@ const AdminCredentialSchema = new Schema({
   designation: { type: String, required: true },
   email: { type: String, required: true, unique: true, lowercase: true, trim: true },
   password: { type: String, required: true },
-  // Enforces a strict fallback string matching the backend validation requirements
   role: { type: String, default: 'MASTER' }
 }, { timestamps: true });
 
@@ -45,5 +44,4 @@ const AdminCredentialSchema = new Schema({
 // ----------------------------------------------------
 export const RegisteredEmployee = mongoose.model('RegisteredEmployee', EmployeeProfileSchema);
 export const AttendanceShiftLog = mongoose.model('AttendanceShiftLog', ShiftLogSchema);
-// 👑 Exporting the new collection model wrapper for the separate Master Admin structure
 export const AdminCredential = mongoose.model('AdminCredential', AdminCredentialSchema);

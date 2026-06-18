@@ -24,11 +24,10 @@ process.on('unhandledRejection', (reason: any) => {
 });
 
 // 🌐 CLOUDINARY CONFIGURATION BRIDGE
-// 👑 FIXED: Added string fallbacks (|| '') to prevent strict TypeScript 'undefined' compilation rejections
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME || 'dfd0kotgh',
   api_key: process.env.CLOUDINARY_API_KEY || '272929261371422',
-  api_secret: process.env.CLOUDINARY_API_SECRET || '', // Enforces a solid string context
+  api_secret: process.env.CLOUDINARY_API_SECRET || 'CSVbxl3UBIhBWkyTmKBqjputk-E', 
 });
 
 // ----------------------------------------------------
@@ -90,6 +89,14 @@ app.post('/api/auth/login', async (req: Request, res: Response): Promise<any> =>
 app.post('/api/admin/register-employee', async (req: Request, res: Response): Promise<any> => {
   const { email, employeeId, name, designation, password, role } = req.body;
 
+  // 🛡️ FRONTEND SANITY Safeguard: Explicitly block requests missing required input data fields
+  if (!email || !employeeId || !name || !password) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Registration Denied: Full Name, Employee ID, Email, and Password fields cannot be left empty.' 
+    });
+  }
+
   try {
     const searchEmail = String(email).trim().toLowerCase();
     const searchId = String(employeeId).trim().toUpperCase();
@@ -98,6 +105,7 @@ app.post('/api/admin/register-employee', async (req: Request, res: Response): Pr
     const existingUser = await RegisteredEmployee.findOne({ email: searchEmail });
 
     if (existingUser) {
+      // 🌟 MULTI-ROLE INTERCEPTOR ENGINE: If they exist as an employee and you assign them to ADMIN_VIEW
       if (targetRole === 'ADMIN_VIEW') {
         await RegisteredEmployee.updateOne(
           { _id: existingUser._id },
@@ -111,28 +119,30 @@ app.post('/api/admin/register-employee', async (req: Request, res: Response): Pr
           employee: updatedUser 
         });
       }
-      return res.status(400).json({ success: false, message: 'This official email address is already actively registered.' });
+      return res.status(400).json({ success: false, message: 'Registration Denied: This email address is already assigned to an active profile.' });
     }
 
+    // 🆔 UNIQUE INDEX CHECK: Ensure Employee ID codes are unique across the collection database
     const existingId = await RegisteredEmployee.findOne({ employeeId: searchId });
     if (existingId) {
-      return res.status(400).json({ success: false, message: 'This Employee ID code is already assigned to a staff profile.' });
+      return res.status(400).json({ success: false, message: 'Registration Denied: This Employee ID is already assigned to a staff profile.' });
     }
 
     const newEmployee = new RegisteredEmployee({
       name: name.trim(),
       employeeId: searchId,
-      designation: designation.trim(),
+      designation: (designation || 'Staff').trim(), 
       email: searchEmail,
       password: password, 
-      role: [targetRole]
+      role: [targetRole] // Matches array string schema mapping natively
     });
 
     await newEmployee.save();
-    return res.status(201).json({ success: true, employee: newEmployee });
+    return res.status(201).json({ success: true, message: 'Employee profile deployed successfully!', employee: newEmployee });
 
   } catch (err: any) {
-    return res.status(500).json({ success: false, message: 'Database schema processing exception.', error: err.message });
+    console.error("MongoDB Core Registration Failure Context:", err);
+    return res.status(500).json({ success: false, message: `Database schema execution conflict: ${err.message || 'Check structural field properties.'}` });
   }
 });
 
@@ -279,8 +289,6 @@ app.post('/api/attendance/punch-clock', async (req: Request, res: Response): Pro
   try {
     let dayLog = await AttendanceShiftLog.findOne({ employeeIdReference: String(employeeId), date: formattedDate });
 
-    // 🚀 CLOUD PROXY INTERCEPTOR:
-    // Automatically relays incoming base64 streams directly to Cloudinary buckets, generating a lightweight network URL link
     let permanentCloudUrl = '';
     if (photoUri && photoUri.startsWith('data:image')) {
       const uploadResponse = await cloudinary.uploader.upload(photoUri, {

@@ -117,14 +117,14 @@ export default function AdminScreen() {
 
   // 🔍 FIXED FILTER ENGINE: VALIDATES CURRENT SELECTED MONTH AND STRICTLY CURRENT ACTIVE YEAR ONLY
   const getFilteredLogs = () => {
-    const currentYearString = new Date().getFullYear().toString(); // Isolates current execution year safely
+    const currentYearString = new Date().getFullYear().toString();
 
     return attendanceLogs.filter((log) => {
       if (!log.date) return false;
 
       const logDateLower = log.date.toLowerCase();
       const matchesMonth = logDateLower.includes(selectedMonthFilter.toLowerCase());
-      const matchesYear = logDateLower.includes(currentYearString); // Year Guard Protection Added
+      const matchesYear = logDateLower.includes(currentYearString);
 
       return matchesMonth && matchesYear;
     });
@@ -194,6 +194,7 @@ export default function AdminScreen() {
         clearAllFormStates();
         fetchEmployeesList();
       } else {
+        // 👑 CRITICAL SYNCHRONIZATION UPGRADE: Now gracefully pipes clean structural response failure messages straight out to screen
         Alert.alert('Operation Denied', result.message || 'Error processing account data.');
       }
     } catch (error) {
@@ -204,6 +205,7 @@ export default function AdminScreen() {
   };
 
   const handleSelectEditEmployee = (item: EmployeeProfile) => {
+    clearAllFormStates(); // Clear any cross-contamination states out first
     setIsEditing(true);
     setEditingTargetId(item._id);
 
@@ -257,7 +259,6 @@ export default function AdminScreen() {
 
   const handleDownloadReport = () => {
     const currentYearString = new Date().getFullYear().toString();
-    // ⏱️ PASSED DYNAMIC TIME METRICS TO BACKEND EXCEL CSV ENGINE
     const downloadUrl = `${API_BASE_URL}/admin/download-attendance?employeeName=${selectedEmpFilter}&month=${selectedMonthFilter}&year=${currentYearString}&includeWorkingHours=true`;
     Linking.openURL(downloadUrl).catch(() => {
       Alert.alert('Download Error', 'Could not connect to spreadsheet download engine.');
