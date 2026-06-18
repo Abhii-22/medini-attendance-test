@@ -45,15 +45,32 @@ function InitialLayoutProtection() {
         router.replace('/login');
       }
     } else {
-      if (adminTargetRoute === 'adminView' || currentUser?.role === 'ADMIN_VIEW') {
+      // 👑 FIXED ROLE PARSING: Safely convert structural Mongoose strings/arrays into unified arrays to support strict authorization lookups
+      const rolesArray = currentUser && Array.isArray(currentUser.role)
+        ? currentUser.role
+        : currentUser?.role
+          ? [currentUser.role]
+          : [];
+
+      // 👁️ Supervisor Routing Pathway Checks
+      if (adminTargetRoute === 'adminView' || rolesArray.includes('ADMIN_VIEW')) {
         if (!inAdminViewPage) router.replace('/adminView');
-      } else if (adminTargetRoute === 'admin' || isAdmin) {
+      } 
+      // 🛠️ Master Admin Routing Pathway Checks
+      else if (adminTargetRoute === 'admin' || isAdmin || rolesArray.includes('MASTER')) {
         if (!inAdminPage) router.replace('/admin');
-      } else {
+      } 
+      // 👤 Standard Workforce Routing Pathway Checks
+      else {
         if (!inTabsGroup) router.replace('/(tabs)'); 
       }
     }
   }, [isAuthenticated, isAdmin, adminTargetRoute, currentUser, segments, isNavigationReady]);
+
+  // 🛡️ SAFESTATE LAYOUT GUARD: Prevents rendering cycles from crashing before navigation finishes booting up
+  if (!isNavigationReady) {
+    return null;
+  }
 
   if (!isAuthenticated) {
     const LoginScreen = require('@/app/login').default;

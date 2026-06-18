@@ -10,7 +10,7 @@ interface EmployeeProfile {
   designation: string;
   email: string;
   password?: string;
-  role?: 'EMPLOYEE' | 'ADMIN_VIEW';
+  role?: string[]; // Defined explicitly as an array of strings
 }
 
 interface AttendanceRecord {
@@ -29,7 +29,6 @@ export default function AdminScreen() {
   const [activeTab, setActiveTab] = useState<'REGISTER' | 'LOGS'>('REGISTER');
   const [selectedEmpFilter, setSelectedEmpFilter] = useState<string>('ALL');
   
-  // 🗓️ MONTH SELECTION FILTER STATE
   const currentMonthName = new Date().toLocaleDateString('en-US', { month: 'long' }); 
   const [selectedMonthFilter, setSelectedMonthFilter] = useState<string>(currentMonthName);
 
@@ -57,7 +56,6 @@ export default function AdminScreen() {
     'July', 'August', 'September', 'October', 'November', 'December'
   ];
 
-  // ⏱️ CENTRAL PARSING ENGINE TO CALCULATE WORK HOURS ON THE FLY
   const calculateWorkingHours = (inTime: string, outTime: string) => {
     if (!inTime || !outTime || inTime === '--:--' || outTime === '--:--' || inTime === 'ABSENT' || outTime === 'ABSENT') {
       return '--';
@@ -115,17 +113,13 @@ export default function AdminScreen() {
     }
   }, [activeTab, selectedEmpFilter]);
 
-  // 🔍 FIXED FILTER ENGINE: VALIDATES CURRENT SELECTED MONTH AND STRICTLY CURRENT ACTIVE YEAR ONLY
   const getFilteredLogs = () => {
     const currentYearString = new Date().getFullYear().toString();
-
     return attendanceLogs.filter((log) => {
       if (!log.date) return false;
-
       const logDateLower = log.date.toLowerCase();
       const matchesMonth = logDateLower.includes(selectedMonthFilter.toLowerCase());
       const matchesYear = logDateLower.includes(currentYearString);
-
       return matchesMonth && matchesYear;
     });
   };
@@ -190,11 +184,10 @@ export default function AdminScreen() {
       const result = await response.json();
 
       if (response.ok && (result.success || result._id)) {
-        Alert.alert('Success 🎉', isEditing ? 'Account profile updated.' : `Credentials generated for ${targetedName}.`);
+        Alert.alert('Success 🎉', isEditing ? 'Account profile updated.' : `Credentials deployed for ${targetedName}.`);
         clearAllFormStates();
         fetchEmployeesList();
       } else {
-        // 👑 CRITICAL SYNCHRONIZATION UPGRADE: Now gracefully pipes clean structural response failure messages straight out to screen
         Alert.alert('Operation Denied', result.message || 'Error processing account data.');
       }
     } catch (error) {
@@ -205,11 +198,14 @@ export default function AdminScreen() {
   };
 
   const handleSelectEditEmployee = (item: EmployeeProfile) => {
-    clearAllFormStates(); // Clear any cross-contamination states out first
+    clearAllFormStates();
     setIsEditing(true);
     setEditingTargetId(item._id);
 
-    if (item.role === 'ADMIN_VIEW') {
+    // 👑 FIXED TS(2345): Explicitly fallback to string array parsing safely
+    const roles: string[] = Array.isArray(item.role) ? item.role : [item.role || 'EMPLOYEE'];
+
+    if (roles.includes('ADMIN_VIEW')) {
       setAdminName(item.name);
       setAdminIdCode(item.employeeId);
       setAdminDesignation(item.designation);
@@ -267,7 +263,7 @@ export default function AdminScreen() {
 
   return (
     <View style={styles.container}>
-      {/* MASTER BANNER HERO */}
+      {/* BANNER HEADER */}
       <View style={styles.headerHeroCard}>
         <View style={styles.headerInfoBlock}>
           <Text style={styles.headerSubtitle}>MASTER MANAGEMENT HUB</Text>
@@ -279,19 +275,30 @@ export default function AdminScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* SYSTEM METRICS OVERVIEW CARDS */}
+      {/* METRIC BADGES */}
       <View style={styles.summaryGridContainer}>
         <View style={[styles.statBoxSummary, { borderLeftColor: '#007AFF' }]}>
-          <Text style={styles.statBoxNumber}>{employees.filter(e => e.role !== 'ADMIN_VIEW').length}</Text>
+          <Text style={styles.statBoxNumber}>
+            {employees.filter(e => {
+              const r: string[] = Array.isArray(e.role) ? e.role : [e.role || 'EMPLOYEE'];
+              return !r.includes('ADMIN_VIEW');
+            }).length}
+          </Text>
           <Text style={styles.statBoxLabel}>Total Staff Profiles</Text>
         </View>
         <View style={[styles.statBoxSummary, { borderLeftColor: '#805AD5' }]}>
-          <Text style={styles.statBoxNumber}>{employees.filter(e => e.role === 'ADMIN_VIEW').length}</Text>
+          <Text style={styles.statBoxNumber}>
+            {employees.filter(e => {
+              // 👑 FIXED TS(7022)/TS(2448): Removed recursive variable self-assignment loop
+              const r: string[] = Array.isArray(e.role) ? e.role : [e.role || 'EMPLOYEE'];
+              return r.includes('ADMIN_VIEW');
+            }).length}
+          </Text>
           <Text style={styles.statBoxLabel}>Admin View Supervisors</Text>
         </View>
       </View>
 
-      {/* MAIN NAVIGATION TAB SWITCH STRIP */}
+      {/* STRIP TABS */}
       <View style={styles.menuToggleRow}>
         <TouchableOpacity style={[styles.menuTab, activeTab === 'REGISTER' && styles.activeMenuTab]} onPress={() => { setActiveTab('REGISTER'); clearAllFormStates(); }}>
           <Ionicons name="person-add-outline" size={14} color={activeTab === 'REGISTER' ? '#007AFF' : '#718096'} style={{ marginRight: 6 }} />
@@ -306,8 +313,8 @@ export default function AdminScreen() {
       {activeTab === 'REGISTER' && (
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
           
-          {/* 👤 FORM 1: STANDARD EMPLOYEE PROVISIONING CARD */}
-          {(!isEditing || (isEditing && employees.find(e => e._id === editingTargetId)?.role !== 'ADMIN_VIEW')) && (
+          {/* 👤 FORM 1: STANDARD EMPLOYEE */}
+          {(!isEditing || (isEditing && !employees.find(e => e._id === editingTargetId)?.role?.includes('ADMIN_VIEW'))) && (
             <View style={styles.formCard}>
               <View style={styles.cardHeaderRow}>
                 <Ionicons name="id-card-outline" size={16} color="#007AFF" />
@@ -350,8 +357,8 @@ export default function AdminScreen() {
             </View>
           )}
 
-          {/* 👁️ FORM 2: ADMIN VIEW SUPERVISOR PROVISIONING CARD */}
-          {(!isEditing || (isEditing && employees.find(e => e._id === editingTargetId)?.role === 'ADMIN_VIEW')) && (
+          {/* 👁️ FORM 2: ADMIN VIEW SUPERVISOR */}
+          {(!isEditing || (isEditing && employees.find(e => e._id === editingTargetId)?.role?.includes('ADMIN_VIEW'))) && (
             <View style={[styles.formCard, { borderTopColor: '#805AD5', borderTopWidth: 4 }]}>
               <View style={styles.cardHeaderRow}>
                 <Ionicons name="eye-outline" size={16} color="#805AD5" />
@@ -403,29 +410,34 @@ export default function AdminScreen() {
             {employees.length === 0 ? (
               <Text style={styles.emptyTextSub}>No active profiles connected inside database container.</Text>
             ) : (
-              employees.map((item) => (
-                <View key={item._id} style={styles.employeeRowItem}>
-                  <View style={[styles.avatarCircle, item.role === 'ADMIN_VIEW' && { backgroundColor: '#FAF5FF', borderColor: '#D6BCFA' }]}>
-                    {item.role === 'ADMIN_VIEW' ? (
-                      <Ionicons name="eye" size={16} color="#805AD5" />
-                    ) : (
-                      <Text style={styles.avatarText}>{item.name.charAt(0).toUpperCase()}</Text>
-                    )}
+              employees.map((item) => {
+                // 👑 FIXED TS(2345): Ensured typed array fallback here as well
+                const roles: string[] = Array.isArray(item.role) ? item.role : [item.role || 'EMPLOYEE'];
+                const isAdminView = roles.includes('ADMIN_VIEW');
+                return (
+                  <View key={item._id} style={styles.employeeRowItem}>
+                    <View style={[styles.avatarCircle, isAdminView && { backgroundColor: '#FAF5FF', borderColor: '#D6BCFA' }]}>
+                      {isAdminView ? (
+                        <Ionicons name="eye" size={16} color="#805AD5" />
+                      ) : (
+                        <Text style={styles.avatarText}>{item.name.charAt(0).toUpperCase()}</Text>
+                      )}
+                    </View>
+                    <View style={styles.employeeInfoBox}>
+                      <Text style={styles.empRowName}>{item.name} <Text style={styles.empRowId}>({item.employeeId})</Text></Text>
+                      <Text style={styles.empRowSub}>{item.designation}  •  <Text style={{ fontWeight: '800' }}>{isAdminView ? 'ADMIN_VIEW' : 'EMPLOYEE'}</Text></Text>
+                    </View>
+                    <View style={styles.crudActionRow}>
+                      <TouchableOpacity style={styles.actionPillEdit} onPress={() => handleSelectEditEmployee(item)}>
+                        <Text style={styles.actionPillTextEdit}>Edit</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.actionPillDelete} onPress={() => handleDeleteTrigger(item._id, item.name)}>
+                        <Text style={styles.actionPillTextDelete}>Wipe</Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
-                  <View style={styles.employeeInfoBox}>
-                    <Text style={styles.empRowName}>{item.name} <Text style={styles.empRowId}>({item.employeeId})</Text></Text>
-                    <Text style={styles.empRowSub}>{item.designation}  •  <Text style={{ fontWeight: '800' }}>{item.role || 'EMPLOYEE'}</Text></Text>
-                  </View>
-                  <View style={styles.crudActionRow}>
-                    <TouchableOpacity style={styles.actionPillEdit} onPress={() => handleSelectEditEmployee(item)}>
-                      <Text style={styles.actionPillTextEdit}>Edit</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.actionPillDelete} onPress={() => handleDeleteTrigger(item._id, item.name)}>
-                      <Text style={styles.actionPillTextDelete}>Wipe</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              ))
+                );
+              })
             )}
           </View>
         </ScrollView>
@@ -433,7 +445,7 @@ export default function AdminScreen() {
 
       {activeTab === 'LOGS' && (
         <View style={{ flex: 1 }}>
-          {/* STAFF DROPDOWN FILTER SECTION */}
+          {/* LOGS WORKSPACE BLOCK */}
           <View style={styles.sectionHeaderRowInline}>
             <Ionicons name="filter" size={14} color="#2B6CB0" />
             <Text style={styles.sectionHeadingLabelInline}>Workforce Filtering Focus</Text>
@@ -443,7 +455,10 @@ export default function AdminScreen() {
               <TouchableOpacity style={[styles.filterPill, selectedEmpFilter === 'ALL' && styles.activeFilterPill]} onPress={() => setSelectedEmpFilter('ALL')}>
                 <Text style={[styles.filterPillText, selectedEmpFilter === 'ALL' && styles.activeFilterPillText]}>🌐 Global Workforce</Text>
               </TouchableOpacity>
-              {employees.filter(e => e.role !== 'ADMIN_VIEW').map((emp) => (
+              {employees.filter(e => {
+                const r: string[] = Array.isArray(e.role) ? e.role : [e.role || 'EMPLOYEE'];
+                return !r.includes('ADMIN_VIEW');
+              }).map((emp) => (
                 <TouchableOpacity key={emp._id} style={[styles.filterPill, selectedEmpFilter === emp.name && styles.activeFilterPill]} onPress={() => setSelectedEmpFilter(emp.name)}>
                   <Text style={[styles.filterPillText, selectedEmpFilter === emp.name && styles.activeFilterPillText]}>👤 {emp.name}</Text>
                 </TouchableOpacity>
@@ -451,7 +466,6 @@ export default function AdminScreen() {
             </ScrollView>
           </View>
 
-          {/* 🗓️ CALENDAR MONTH SELECTION STRIP WITH YEAR MATCH PROTECTION */}
           <View style={styles.sectionHeaderRowInline}>
             <Ionicons name="calendar-outline" size={14} color="#2B6CB0" />
             <Text style={styles.sectionHeadingLabelInline}>Select Active Tracking Month ({new Date().getFullYear()})</Text>
@@ -459,20 +473,13 @@ export default function AdminScreen() {
           <View style={[styles.pillScrollFrame, { marginBottom: 15 }]}>
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
               {availableMonths.map((month) => (
-                <TouchableOpacity 
-                  key={month} 
-                  style={[styles.monthFilterPill, selectedMonthFilter === month && styles.activeMonthFilterPill]} 
-                  onPress={() => setSelectedMonthFilter(month)}
-                >
-                  <Text style={[styles.monthFilterPillText, selectedMonthFilter === month && styles.activeMonthFilterPillText]}>
-                    📅 {month}
-                  </Text>
+                <TouchableOpacity key={month} style={[styles.monthFilterPill, selectedMonthFilter === month && styles.activeMonthFilterPill]} onPress={() => setSelectedMonthFilter(month)}>
+                  <Text style={[styles.monthFilterPillText, selectedMonthFilter === month && styles.activeMonthFilterPillText]}>📅 {month}</Text>
                 </TouchableOpacity>
               ))}
             </ScrollView>
           </View>
 
-          {/* MONTH SENSITIVE CSV DOWNLOAD ACCELERATOR PIN BUTTON */}
           <TouchableOpacity style={styles.downloadFloatingBtn} activeOpacity={0.8} onPress={handleDownloadReport}>
             <Ionicons name="cloud-download" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
             <Text style={styles.downloadFloatingBtnText}>Export {selectedMonthFilter} {new Date().getFullYear()} Sheet to CSV</Text>
@@ -509,7 +516,6 @@ export default function AdminScreen() {
                       </View>
                     </View>
                     <View style={styles.punchMetricsRow}>
-                      {/* ⏱️ INTEGRATED WORKING TIME DURATION BOX CONTAINER */}
                       <View style={[styles.metricBox, { backgroundColor: '#F0FDF4', borderColor: '#DCFCE7' }]}>
                         <Text style={[styles.metricLabel, { color: '#16A34A' }]}>HOURS WORKED</Text>
                         <Text style={[styles.metricTime, { color: '#15803D' }]}>

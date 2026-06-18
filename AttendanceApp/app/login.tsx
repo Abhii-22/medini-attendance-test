@@ -34,9 +34,15 @@ export default function LoginScreen() {
       const result = await response.json();
 
       if (response.ok && result.success) {
+        // 👑 SAFELY PARSE ARRAY PRIVILEGES: Converts any format securely into an array string reference lookup map
+        const rolesArray: string[] = result.user && Array.isArray(result.user.role)
+          ? result.user.role
+          : result.user?.role
+            ? [result.user.role]
+            : [];
         
-        // 🚀 CRITICAL NEW SECURITY LAYER: Validate matching authorization parameters
-        if (loginMode === 'EMPLOYEE' && result.user?.role === 'ADMIN_VIEW') {
+        // 🚀 UPDATED LAYER: Validate matching authorization parameters against array mappings
+        if (loginMode === 'EMPLOYEE' && rolesArray.includes('ADMIN_VIEW') && !rolesArray.includes('EMPLOYEE')) {
           Alert.alert(
             'Access Denied 🔐',
             'This account has Administrative View status. Please use the "Admin View" tab to sign in.'
@@ -45,8 +51,8 @@ export default function LoginScreen() {
           return;
         }
 
-        // Prevent standard employees from crossing over if loginMode mismatch happens
-        if (loginMode === 'ADMIN_VIEW' && result.user?.role !== 'ADMIN_VIEW') {
+        // 👁️ Supervisor Role Interceptor
+        if (loginMode === 'ADMIN_VIEW' && !rolesArray.includes('ADMIN_VIEW')) {
           Alert.alert(
             'Access Denied 🔐',
             'This account does not have supervisor monitoring clearance.'
