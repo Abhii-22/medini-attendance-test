@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, Text, View, ScrollView, TouchableOpacity, ActivityIndicator, Image } from 'react-native';
+import { StyleSheet, Text, View, ScrollView, TouchableOpacity, ActivityIndicator, Image, Modal } from 'react-native';
 import { useAuth, API_BASE_URL } from '../_layout';
-import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 
 interface BackendLog {
   _id: string;
@@ -11,6 +11,17 @@ interface BackendLog {
   logoutTime: string;
   capturedPhotoInUri?: string;
   capturedPhotoOutUri?: string;
+  locationInAddress?: string;
+  locationOutAddress?: string;
+}
+
+interface PhotoModalState {
+  visible: boolean;
+  imageUri: string | null;
+  location: string;
+  type: 'LOGIN' | 'LOGOUT';
+  date: string;
+  time: string;
 }
 
 export default function HistoryScreen() {
@@ -19,7 +30,15 @@ export default function HistoryScreen() {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
 
-  // ⏱️ PARSING ENGINE TO DYNAMICALLY CALCULATE AND ACCUMULATE WORK HOURS 
+  const [modalState, setModalState] = useState<PhotoModalState>({
+    visible: false,
+    imageUri: null,
+    location: '',
+    type: 'LOGIN',
+    date: '',
+    time: ''
+  });
+
   const calculateWorkingHours = (inTime: string, outTime: string) => {
     if (!inTime || !outTime || inTime === '--:--' || outTime === '--:--' || inTime === 'ABSENT' || outTime === 'ABSENT') {
       return '--';
@@ -65,6 +84,27 @@ export default function HistoryScreen() {
 
   const handleToggleDrawer = (id: string) => {
     setExpandedLogId(expandedLogId === id ? null : id);
+  };
+
+  const openPhotoModal = (
+    imageUri: string, 
+    location: string | undefined, 
+    type: 'LOGIN' | 'LOGOUT', 
+    date: string, 
+    time: string
+  ) => {
+    setModalState({
+      visible: true,
+      imageUri,
+      location: location || '', // 🚀 Raw address string directly from backend
+      type,
+      date,
+      time
+    });
+  };
+
+  const closePhotoModal = () => {
+    setModalState(prev => ({ ...prev, visible: false }));
   };
 
   return (
@@ -125,7 +165,6 @@ export default function HistoryScreen() {
                   </View>
 
                   <View style={styles.punchRow}>
-                    {/* ⏱️ INTEGRATED ACCUMULATED SHIFT HOURS DISPLAY UNIT */}
                     <View style={[styles.punchItem, { backgroundColor: '#F0FDF4', borderColor: '#DCFCE7' }, isAbsent && { backgroundColor: '#FFF5F5', borderColor: '#FED7D7' }]}>
                       <Text style={[styles.punchLabel, { color: '#16A34A' }, isAbsent && { color: '#E53E3E' }]}>DURATION</Text>
                       <Text style={[styles.punchTime, { color: '#15803D' }, isAbsent && { color: '#E53E3E' }]}>
@@ -158,10 +197,24 @@ export default function HistoryScreen() {
                     <Text style={styles.drawerLabelTitle}>Biometric Verification Snapshots:</Text>
                     <View style={styles.photoGridRow}>
                       
+                      {/* 📥 PUNCH IN THUMBNAIL */}
                       <View style={styles.photoBlock}>
                         <Text style={styles.photoGridLabel}>📥 Punch In Capture:</Text>
                         {hasInPhoto ? (
-                          <Image source={{ uri: item.capturedPhotoInUri }} style={styles.drawerSelfiePreviewImage} />
+                          <TouchableOpacity 
+                            activeOpacity={0.85}
+                            onPress={() => openPhotoModal(item.capturedPhotoInUri!, item.locationInAddress, 'LOGIN', item.date, item.loginTime)}
+                            style={styles.imageOverlayWrapper}
+                          >
+                            <Image source={{ uri: item.capturedPhotoInUri }} style={styles.drawerSelfiePreviewImage} />
+                            
+                            <View style={styles.thumbnailGeotagStamp}>
+                              <Ionicons name="location-sharp" size={9} color="#FFD700" style={{ marginRight: 2 }} />
+                              <Text style={styles.thumbnailGeotagText} numberOfLines={1}>
+                                {item.locationInAddress || ''}
+                              </Text>
+                            </View>
+                          </TouchableOpacity>
                         ) : (
                           <View style={styles.noImageDashedPlaceholder}>
                             <Ionicons name="image-outline" size={20} color="#A0AEC0" style={{ marginBottom: 4 }} />
@@ -170,10 +223,24 @@ export default function HistoryScreen() {
                         )}
                       </View>
 
-                      <View style={{ width: '48%' }}>
+                      {/* 📤 PUNCH OUT THUMBNAIL */}
+                      <View style={styles.photoBlock}>
                         <Text style={styles.photoGridLabel}>📤 Punch Out Capture:</Text>
                         {hasOutPhoto ? (
-                          <Image source={{ uri: item.capturedPhotoOutUri }} style={styles.drawerSelfiePreviewImage} />
+                          <TouchableOpacity 
+                            activeOpacity={0.85}
+                            onPress={() => openPhotoModal(item.capturedPhotoOutUri!, item.locationOutAddress, 'LOGOUT', item.date, item.logoutTime)}
+                            style={styles.imageOverlayWrapper}
+                          >
+                            <Image source={{ uri: item.capturedPhotoOutUri }} style={styles.drawerSelfiePreviewImage} />
+                            
+                            <View style={styles.thumbnailGeotagStamp}>
+                              <Ionicons name="location-sharp" size={9} color="#FFD700" style={{ marginRight: 2 }} />
+                              <Text style={styles.thumbnailGeotagText} numberOfLines={1}>
+                                {item.locationOutAddress || ''}
+                              </Text>
+                            </View>
+                          </TouchableOpacity>
                         ) : (
                           <View style={styles.noImageDashedPlaceholder}>
                             <Ionicons name="image-outline" size={20} color="#A0AEC0" style={{ marginBottom: 4 }} />
@@ -190,6 +257,47 @@ export default function HistoryScreen() {
           })}
         </ScrollView>
       )}
+
+      {/* POPUP MODAL */}
+      <Modal
+        visible={modalState.visible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={closePhotoModal}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCardContainer}>
+            <TouchableOpacity style={styles.modalCloseButton} onPress={closePhotoModal}>
+              <Ionicons name="close-circle" size={32} color="#FFFFFF" />
+            </TouchableOpacity>
+
+            {modalState.imageUri && (
+              <View style={styles.geotagPhotoFrame}>
+                <Image source={{ uri: modalState.imageUri }} style={styles.modalFullImage} />
+
+                <View style={styles.geotagStampOverlay}>
+                  <View style={styles.geotagStampHeader}>
+                    <Ionicons name="location" size={13} color="#FFD700" />
+                    <Text style={styles.geotagStampTitle}>GPS MAP CAMERA</Text>
+                  </View>
+                  
+                  {/* EXACT LOCATION TEXT CAPTURED */}
+                  <Text style={styles.geotagStampAddress}>
+                    {modalState.location}
+                  </Text>
+                  
+                  <View style={styles.geotagStampMetaRow}>
+                    <Text style={styles.geotagStampMetaText}>
+                      {modalState.date} • {modalState.time} • {modalState.type} VERIFIED
+                    </Text>
+                  </View>
+                </View>
+
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -229,11 +337,38 @@ const styles = StyleSheet.create({
   photoGridRow: { flexDirection: 'row', justifyContent: 'space-between', width: '100%' },
   photoBlock: { width: '48%' },
   photoGridLabel: { fontSize: 10, fontWeight: '700', color: '#718096', marginBottom: 4 },
-  drawerSelfiePreviewImage: { width: '100%', height: 140, borderRadius: 10, backgroundColor: '#EDF2F7', resizeMode: 'cover' },
+  
+  imageOverlayWrapper: { position: 'relative', overflow: 'hidden', borderRadius: 12 },
+  drawerSelfiePreviewImage: { width: '100%', height: 140, backgroundColor: '#EDF2F7', resizeMode: 'cover' },
+  
+  thumbnailGeotagStamp: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(0, 0, 0, 0.8)', paddingVertical: 4, paddingHorizontal: 6, flexDirection: 'row', alignItems: 'center' },
+  thumbnailGeotagText: { color: '#FFFFFF', fontSize: 8, fontWeight: '700', flex: 1 },
+
   noImageDashedPlaceholder: { width: '100%', paddingVertical: 36, backgroundColor: '#FFFFFF', borderRadius: 10, borderWidth: 1, borderStyle: 'dashed', borderColor: '#CBD5E0', justifyContent: 'center', alignItems: 'center' },
   noImagePlaceholderText: { color: '#A0AEC0', fontSize: 11, fontWeight: '600', fontStyle: 'italic' },
   
   emptyContainer: { flex: 0.8, justifyContent: 'center', alignItems: 'center', minHeight: 300 },
   emptyIconCircle: { width: 54, height: 54, borderRadius: 27, backgroundColor: '#EDF2F7', justifyContent: 'center', alignItems: 'center', marginBottom: 10 },
-  emptyText: { color: '#718096', fontSize: 14, fontWeight: '600' }
+  emptyText: { color: '#718096', fontSize: 14, fontWeight: '600' },
+
+  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', alignItems: 'center', padding: 16 },
+  modalCardContainer: { width: '100%', maxWidth: 360, alignItems: 'center', position: 'relative' },
+  modalCloseButton: { position: 'absolute', top: -45, right: 0, zIndex: 10 },
+  
+  geotagPhotoFrame: { width: '100%', height: 460, borderRadius: 20, overflow: 'hidden', position: 'relative', backgroundColor: '#000', borderWidth: 2, borderColor: '#FFFFFF' },
+  modalFullImage: { width: '100%', height: '100%', resizeMode: 'cover' },
+
+  geotagStampOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(18, 18, 18, 0.88)',
+    padding: 12,
+  },
+  geotagStampHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
+  geotagStampTitle: { color: '#FFD700', fontSize: 10, fontWeight: '900', marginLeft: 5, letterSpacing: 0.8 },
+  geotagStampAddress: { color: '#FFFFFF', fontSize: 10, fontWeight: '600', lineHeight: 14, marginBottom: 8 },
+  geotagStampMetaRow: { borderTopWidth: 1, borderTopColor: 'rgba(255, 255, 255, 0.2)', paddingTop: 6 },
+  geotagStampMetaText: { color: '#E2E8F0', fontSize: 9, fontWeight: '700', letterSpacing: 0.2 }
 });

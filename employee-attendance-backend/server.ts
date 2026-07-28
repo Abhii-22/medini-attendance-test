@@ -2,21 +2,19 @@ import express, { type Request, type Response } from 'express';
 import mongoose from 'mongoose';
 import cors from 'cors';
 import dotenv from 'dotenv';
-// 👑 FIXED IMPORT LAYER: Silenced strict compilation type helper checks for the natively bundled module
 // @ts-ignore
 import { v2 as cloudinary } from 'cloudinary'; 
-// 📜 Imported the separate AdminCredential model safely from your updated schemas file
 import { RegisteredEmployee, AttendanceShiftLog, AdminCredential } from './models/AttendanceSchemas.js'; 
 
 dotenv.config();
 const app = express();
 app.use(cors());
 
-// ⚙️ ENFORCED PAYLOAD LIMITS: Preserved to allow swift buffer processing loops
+// ⚙️ ENFORCED PAYLOAD LIMITS
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-// 🛡️ CRITICAL NODE.JS v22 LOG PATCH: Forces the terminal engine to print readable stack traces instead of [Object: null prototype]
+// 🛡️ CRITICAL NODE.JS LOG PATCH
 process.on('unhandledRejection', (reason: any) => {
   console.error('\n🛡️ Intercepted Background Rejection:');
   console.error(reason instanceof Error ? reason.stack : reason);
@@ -39,7 +37,6 @@ app.post('/api/auth/login', async (req: Request, res: Response): Promise<any> =>
   try {
     const searchEmail = String(email).toLowerCase();
 
-    // 👑 SEPARATED PATHWAY: If logging into an Admin Panel, check ONLY the AdminCredential collection
     if (loginMode === 'ADMIN_PANEL' || loginMode === 'ADMIN') {
       const adminProfile = await AdminCredential.findOne({ email: searchEmail });
       
@@ -53,7 +50,6 @@ app.post('/api/auth/login', async (req: Request, res: Response): Promise<any> =>
       return res.status(403).json({ success: false, message: 'This account lacks Master Admin privileges.' });
     }
 
-    // 👤 & 👁️ STANDARD PATHWAY: Workforce maps to RegisteredEmployee collection
     const userProfile = await RegisteredEmployee.findOne({ email: searchEmail });
     
     if (!userProfile || userProfile.password !== password) {
@@ -84,12 +80,11 @@ app.post('/api/auth/login', async (req: Request, res: Response): Promise<any> =>
 });
 
 // ------------------------------------------------------------------
-// 2. COLLISION-PROOF ACCOUNT PROVISIONING WORKSPACE (UPSERT ENGINE)
+// 2. COLLISION-PROOF ACCOUNT PROVISIONING WORKSPACE
 // ------------------------------------------------------------------
 app.post('/api/admin/register-employee', async (req: Request, res: Response): Promise<any> => {
   const { email, employeeId, name, designation, password, role } = req.body;
 
-  // 🛡️ FRONTEND SANITY Safeguard: Explicitly block requests missing required input data fields
   if (!email || !employeeId || !name || !password) {
     return res.status(400).json({ 
       success: false, 
@@ -105,7 +100,6 @@ app.post('/api/admin/register-employee', async (req: Request, res: Response): Pr
     const existingUser = await RegisteredEmployee.findOne({ email: searchEmail });
 
     if (existingUser) {
-      // 🌟 MULTI-ROLE INTERCEPTOR ENGINE: If they exist as an employee and you assign them to ADMIN_VIEW
       if (targetRole === 'ADMIN_VIEW') {
         await RegisteredEmployee.updateOne(
           { _id: existingUser._id },
@@ -122,7 +116,6 @@ app.post('/api/admin/register-employee', async (req: Request, res: Response): Pr
       return res.status(400).json({ success: false, message: 'Registration Denied: This email address is already assigned to an active profile.' });
     }
 
-    // 🆔 UNIQUE INDEX CHECK: Ensure Employee ID codes are unique across the collection database
     const existingId = await RegisteredEmployee.findOne({ employeeId: searchId });
     if (existingId) {
       return res.status(400).json({ success: false, message: 'Registration Denied: This Employee ID is already assigned to a staff profile.' });
@@ -134,7 +127,7 @@ app.post('/api/admin/register-employee', async (req: Request, res: Response): Pr
       designation: (designation || 'Staff').trim(), 
       email: searchEmail,
       password: password, 
-      role: [targetRole] // Matches array string schema mapping natively
+      role: [targetRole]
     });
 
     await newEmployee.save();
@@ -256,11 +249,13 @@ app.get('/api/admin/download-attendance', async (req: Request, res: Response): P
       return matchesMonth && matchesYear;
     });
 
-    let csvData = "Employee Name,Employee ID,Date,Day of Week,Login Time,Logout Time,Hours Worked\n";
+    let csvData = "Employee Name,Employee ID,Date,Day of Week,Login Time,Logout Time,Punch In Location,Punch Out Location,Hours Worked\n";
 
-    filteredRecords.forEach(row => {
+    filteredRecords.forEach((row: any) => {
       const workingHours = calculateServerWorkingHours(row.loginTime, row.logoutTime);
-      csvData += `"${row.employeeName}","${row.employeeIdReference}","${row.date}","${row.dayOfWeek}","${row.loginTime}","${row.logoutTime}","${workingHours}"\n`;
+      const locIn = (row.get('locationInAddress') || '').replace(/"/g, '""');
+      const locOut = (row.get('locationOutAddress') || '').replace(/"/g, '""');
+      csvData += `"${row.employeeName}","${row.employeeIdReference}","${row.date}","${row.dayOfWeek}","${row.loginTime}","${row.logoutTime}","${locIn}","${locOut}","${workingHours}"\n`;
     });
 
     const filePrefixMonth = filterMonth || 'Global';
@@ -279,7 +274,7 @@ app.get('/api/admin/download-attendance', async (req: Request, res: Response): P
 // 4. BIOMETRIC HARDWARE CLOCK-PUNCH HANDSHAKES
 // ----------------------------------------------------
 app.post('/api/attendance/punch-clock', async (req: Request, res: Response): Promise<any> => {
-  const { employeeId, name, type, photoUri } = req.body; 
+  const { employeeId, name, type, photoUri, locationAddress } = req.body; 
   
   const now = new Date();
   const formattedDate = now.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'Asia/Kolkata' });
@@ -304,6 +299,8 @@ app.post('/api/attendance/punch-clock', async (req: Request, res: Response): Pro
         dayLog.logoutTime = 'ABSENT';
         dayLog.set('capturedPhotoInUri', ''); 
         dayLog.set('capturedPhotoOutUri', ''); 
+        dayLog.set('locationInAddress', '');
+        dayLog.set('locationOutAddress', '');
         await dayLog.save();
       } else {
         dayLog = new AttendanceShiftLog({
@@ -314,7 +311,9 @@ app.post('/api/attendance/punch-clock', async (req: Request, res: Response): Pro
           loginTime: 'ABSENT',
           logoutTime: 'ABSENT',
           capturedPhotoInUri: '',
-          capturedPhotoOutUri: ''
+          capturedPhotoOutUri: '',
+          locationInAddress: '',
+          locationOutAddress: ''
         });
         await dayLog.save();
       }
@@ -325,9 +324,11 @@ app.post('/api/attendance/punch-clock', async (req: Request, res: Response): Pro
       if (type === 'LOGIN') {
         dayLog.loginTime = formattedTime;
         if (permanentCloudUrl) dayLog.set('capturedPhotoInUri', permanentCloudUrl); 
+        if (locationAddress) dayLog.set('locationInAddress', locationAddress);
       } else {
         dayLog.logoutTime = formattedTime;
         if (permanentCloudUrl) dayLog.set('capturedPhotoOutUri', permanentCloudUrl); 
+        if (locationAddress) dayLog.set('locationOutAddress', locationAddress);
       }
       await dayLog.save();
     } else {
@@ -339,7 +340,9 @@ app.post('/api/attendance/punch-clock', async (req: Request, res: Response): Pro
         loginTime: type === 'LOGIN' ? formattedTime : '--:--',
         logoutTime: type === 'LOGOUT' ? formattedTime : '--:--',
         capturedPhotoInUri: type === 'LOGIN' ? (permanentCloudUrl || '') : '',
-        capturedPhotoOutUri: type === 'LOGOUT' ? (permanentCloudUrl || '') : ''
+        capturedPhotoOutUri: type === 'LOGOUT' ? (permanentCloudUrl || '') : '',
+        locationInAddress: type === 'LOGIN' ? (locationAddress || '') : '',
+        locationOutAddress: type === 'LOGOUT' ? (locationAddress || '') : ''
       });
       await dayLog.save();
     }
@@ -370,7 +373,7 @@ app.patch('/api/employee/update-profile', async (req: Request, res: Response): P
 });
 
 // ----------------------------------------------------
-// 5. SECURE ENFORCED ENGINE INITIALIZATION BLOCK
+// 5. ENGINE INITIALIZATION BLOCK
 // ----------------------------------------------------
 const ATLAST_MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/employeeAttendanceSystem';
 

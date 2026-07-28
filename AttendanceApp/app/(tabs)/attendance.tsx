@@ -2,7 +2,6 @@ import React, { useState, useRef } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator, Alert, Image, Dimensions, ScrollView } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Location from 'expo-location';
-import * as FileSystem from 'expo-file-system'; 
 import { OFFICE_LOCATION } from '@/constants/Location';
 import { useAttendance } from '@/constants/AttendanceContext';
 import { useAuth, API_BASE_URL } from '../_layout'; 
@@ -19,10 +18,12 @@ export default function AttendanceScreen() {
   const [isLocationVerified, setIsLocationVerified] = useState<boolean>(false);
   const [attendanceType, setAttendanceType] = useState<'LOGIN' | 'LOGOUT' | 'ABSENT' | null>(null);
   const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
-  const [base64PhotoData, setBase64PhotoData] = useState<string | null>(null); // 🚀 Stores cross-device raw string data
+  const [base64PhotoData, setBase64PhotoData] = useState<string | null>(null); 
   const [showCamera, setShowCamera] = useState<boolean>(false);
   const [currentDistance, setCurrentDistance] = useState<number | null>(null);
-  
+  const [locationAddress, setLocationAddress] = useState<string>('');
+  const [currentDateTime, setCurrentDateTime] = useState<string>('');
+
   const cameraRef = useRef<any>(null);
 
   const employeeName = currentUser?.name || 'Employee';
@@ -45,7 +46,8 @@ export default function AttendanceScreen() {
     setLoading(true);
     setAttendanceType(type);
     setCurrentDistance(null);
-    setLoadingMessage('Initializing tracking hardware...');
+    setLocationAddress('');
+    setLoadingMessage('Acquiring precise satellite location...');
 
     try {
       const { status: locStatus } = await Location.requestForegroundPermissionsAsync();
@@ -64,12 +66,10 @@ export default function AttendanceScreen() {
         }
       }
 
-      setLoadingMessage('Securing steady GPS coordination locks...');
-      
       const position = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
-      }).catch(() => {
-        return {
+        accuracy: Location.Accuracy.High,
+      }).catch(async () => {
+        return await Location.getLastKnownPositionAsync({}) || {
           coords: {
             latitude: OFFICE_LOCATION.latitude,
             longitude: OFFICE_LOCATION.longitude,
@@ -77,6 +77,34 @@ export default function AttendanceScreen() {
           }
         };
       });
+
+      const now = new Date();
+      const dateStr = now.toLocaleDateString('en-GB');
+      const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      setCurrentDateTime(`${dateStr} • ${timeStr}`);
+
+      // 📌 ALWAYS GUARANTEE A VALID STREET ADDRESS OR EXACT GPS COORDINATES
+      const fallbackCoords = `Lat: ${position.coords.latitude.toFixed(5)}, Long: ${position.coords.longitude.toFixed(5)}`;
+
+      try {
+        const geocode = await Location.reverseGeocodeAsync({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude
+        });
+
+        if (geocode && geocode.length > 0) {
+          const place = geocode[0];
+          const streetDetails = [place.name, place.street, place.district, place.subregion].filter(Boolean).join(', ');
+          const cityRegion = [place.city, place.region, place.postalCode].filter(Boolean).join(', ');
+
+          const formatted = [streetDetails, cityRegion, fallbackCoords].filter(Boolean).join(' | ');
+          setLocationAddress(formatted || fallbackCoords);
+        } else {
+          setLocationAddress(fallbackCoords);
+        }
+      } catch (err) {
+        setLocationAddress(fallbackCoords);
+      }
 
       const distance = calculateDistance(
         position.coords.latitude,
@@ -86,7 +114,6 @@ export default function AttendanceScreen() {
       );
 
       setCurrentDistance(distance);
-
       const locationAccuracy = position?.coords?.accuracy ?? 0;
 
       if (distance <= OFFICE_LOCATION.radiusInMeters || locationAccuracy > 100) {
@@ -106,28 +133,11 @@ export default function AttendanceScreen() {
     }
   };
 
-  const handleMarkAbsent = () => {
-    Alert.alert(
-      'Confirm Absence 🗓️',
-      'Are you sure you want to mark yourself as absent for today? This action cannot be undone.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Confirm Absent', 
-          style: 'destructive',
-          onPress: () => executeCloudAttendanceSubmission('ABSENT', '')
-        }
-      ]
-    );
-  };
-
   const takeSelfie = async () => {
     if (cameraRef.current) {
       try {
-        // 📸 COMPRESSION TUNING: Capped frame bounding boxes and dropped compression quality to 0.1
-        // This ensures the resulting text string stays tiny, avoiding mobile network packet drops.
         const options = { 
-          quality: 0.1, 
+          quality: 0.2, 
           skipProcessing: false,
           maxHeight: 480,
           maxWidth: 480
@@ -136,10 +146,9 @@ export default function AttendanceScreen() {
         
         if (photo && photo.uri) {
           setLoading(true);
-          setLoadingMessage('Optimizing encryption strings...');
+          setLoadingMessage('Optimizing image & attaching geotag...');
           setCapturedPhoto(photo.uri); 
 
-          // Invoke stable string compiler from legacy native dependencies
           const LegacyFS = require('expo-file-system/legacy');
           const base64Content = await LegacyFS.readAsStringAsync(photo.uri, {
             encoding: 'base64', 
@@ -158,17 +167,18 @@ export default function AttendanceScreen() {
 
   const handleSubmitAttendance = () => {
     if ((attendanceType === 'LOGIN' || attendanceType === 'LOGOUT') && base64PhotoData) {
-      executeCloudAttendanceSubmission(attendanceType, base64PhotoData);
+      executeCloudAttendanceSubmission(attendanceType, base64PhotoData, locationAddress);
+    } else {
+      Alert.alert('Missing Data', 'Please retake the photo before submitting.');
     }
   };
 
-  const executeCloudAttendanceSubmission = async (type: 'LOGIN' | 'LOGOUT' | 'ABSENT', photoPayloadString: string) => {
+  const executeCloudAttendanceSubmission = async (type: 'LOGIN' | 'LOGOUT' | 'ABSENT', photoPayloadString: string, addressString: string) => {
     setLoading(true);
     setLoadingMessage('Uploading shift metrics to database cluster...');
 
-    // ⏱️ CONNECTION PROTECTION: Enforce a 45-second open-socket timeout barrier
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 45000);
+    const timeoutId = setTimeout(() => controller.abort(), 25000);
 
     try {
       const response = await fetch(`${API_BASE_URL}/attendance/punch-clock`, {
@@ -182,7 +192,8 @@ export default function AttendanceScreen() {
           employeeId: employeeId,
           name: employeeName,
           type: type,
-          photoUri: photoPayloadString 
+          photoUri: photoPayloadString,
+          locationAddress: addressString
         })
       });
 
@@ -199,11 +210,10 @@ export default function AttendanceScreen() {
       }
     } catch (error: any) {
       clearTimeout(timeoutId);
-      
       if (error.name === 'AbortError') {
-        Alert.alert('Network Timeout ⏱️', 'The data took too long to stream. Check your network strength and try again.');
+        Alert.alert('Network Timeout ⏱️', 'Connection timed out. Check mobile network strength.');
       } else {
-        Alert.alert('Network Interruption 🌐', 'Failed to reach cloud servers. Ensure mobile data/Wi-Fi is active.');
+        Alert.alert('Network Interruption 🌐', 'Failed to reach cloud servers.');
       }
       setLoading(false);
     }
@@ -215,6 +225,7 @@ export default function AttendanceScreen() {
     setCapturedPhoto(null);
     setBase64PhotoData(null);
     setShowCamera(false);
+    setLocationAddress('');
     setLoading(false);
   };
 
@@ -249,7 +260,6 @@ export default function AttendanceScreen() {
       ) : (
         <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
           
-          {/* PROFILE USER BADGE HERO HEADER */}
           <View style={styles.executiveHeaderCard}>
             <View style={styles.avatarBadge}>
               <Text style={styles.avatarText}>{employeeName.charAt(0).toUpperCase()}</Text>
@@ -260,7 +270,6 @@ export default function AttendanceScreen() {
             </View>
           </View>
 
-          {/* REAL-TIME ENFORCED PERIMETER SUMMARY CARD */}
           <View style={styles.perimeterConfigCard}>
             <View style={styles.perimeterIconWrapper}>
               <FontAwesome5 name="building" size={16} color="#007AFF" />
@@ -271,7 +280,6 @@ export default function AttendanceScreen() {
             </View>
           </View>
 
-          {/* LOADER MIDDLEWARE GRAPH */}
           {loading && (
             <View style={styles.modernLoaderContainer}>
               <ActivityIndicator size="large" color="#007AFF" />
@@ -279,7 +287,6 @@ export default function AttendanceScreen() {
             </View>
           )}
 
-          {/* ACTION INTERACTIVE DASHBOARD HUB */}
           {!isLocationVerified && !loading && !capturedPhoto && (
             <View style={styles.actionPanel}>
               <View style={styles.sectionHeaderRowInline}>
@@ -321,7 +328,7 @@ export default function AttendanceScreen() {
               <TouchableOpacity 
                 style={styles.absentButtonLarge}
                 activeOpacity={0.85}
-                onPress={handleMarkAbsent}
+                onPress={() => executeCloudAttendanceSubmission('ABSENT', '', '')}
               >
                 <Ionicons name="close-circle-outline" size={18} color="#E53E3E" style={{ marginRight: 6 }} />
                 <Text style={styles.absentButtonText}>Declare Absence Registry</Text>
@@ -329,7 +336,6 @@ export default function AttendanceScreen() {
             </View>
           )}
 
-          {/* BIOMETRIC COMPLIANCE SNAPSHOT REVIEW BOX */}
           {capturedPhoto && !loading && (
             <View style={styles.reviewLayoutContainer}>
               <View style={styles.successStatusRibbon}>
@@ -340,10 +346,21 @@ export default function AttendanceScreen() {
               <Text style={styles.reviewMainHeading}>Confirm Sign-off Record</Text>
               <Text style={styles.reviewSubheading}>Location coordinates mapped within permitted office bounds.</Text>
 
-              <View style={styles.imagePreviewFrameShadow}>
-                <Image source={{ uri: capturedPhoto }} style={styles.premiumPreviewImage} />
-                <View style={styles.floatingModeTag}>
-                  <Text style={styles.floatingTagText}>{attendanceType} VERIFIED</Text>
+              <View style={styles.geotagPhotoContainer}>
+                <Image source={{ uri: capturedPhoto }} style={styles.geotagImage} />
+                
+                <View style={styles.geotagStampOverlay}>
+                  <View style={styles.geotagStampHeader}>
+                    <Ionicons name="location" size={12} color="#FFD700" />
+                    <Text style={styles.geotagStampTitle}>GPS MAP CAMERA</Text>
+                  </View>
+                  <Text style={styles.geotagStampAddress} numberOfLines={3}>
+                    {locationAddress}
+                  </Text>
+                  <View style={styles.geotagStampMetaRow}>
+                    <Text style={styles.geotagStampMetaText}>{currentDateTime}</Text>
+                    <Text style={styles.geotagStampMetaText}>•  {attendanceType} VERIFIED</Text>
+                  </View>
                 </View>
               </View>
 
@@ -418,10 +435,16 @@ const styles = StyleSheet.create({
   successRibbonText: { color: '#234E52', fontSize: 9, fontWeight: '800', letterSpacing: 0.4 },
   reviewMainHeading: { fontSize: 18, fontWeight: '800', color: '#1A202C' },
   reviewSubheading: { fontSize: 12, color: '#718096', marginTop: 4, textAlign: 'center', marginBottom: 20, paddingHorizontal: 10 },
-  imagePreviewFrameShadow: { shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.08, shadowRadius: 12, elevation: 4, marginBottom: 24, position: 'relative' },
-  premiumPreviewImage: { width: 150, height: 150, borderRadius: 75, borderWidth: 4, borderColor: '#FFFFFF' },
-  floatingModeTag: { position: 'absolute', bottom: -6, backgroundColor: '#007AFF', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 8, alignSelf: 'center', shadowColor: '#007AFF', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.2, shadowRadius: 4, elevation: 2 },
-  floatingTagText: { color: '#FFF', fontSize: 9, fontWeight: '800', letterSpacing: 0.2 },
+  
+  geotagPhotoContainer: { width: 240, height: 280, borderRadius: 16, overflow: 'hidden', marginBottom: 20, backgroundColor: '#000', position: 'relative' },
+  geotagImage: { width: '100%', height: '100%', resizeMode: 'cover' },
+  geotagStampOverlay: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(0, 0, 0, 0.8)', padding: 10 },
+  geotagStampHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 2 },
+  geotagStampTitle: { color: '#FFD700', fontSize: 9, fontWeight: '900', marginLeft: 4, letterSpacing: 0.5 },
+  geotagStampAddress: { color: '#FFFFFF', fontSize: 9, fontWeight: '600', lineHeight: 13 },
+  geotagStampMetaRow: { flexDirection: 'row', marginTop: 4, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.2)', paddingTop: 4 },
+  geotagStampMetaText: { color: '#CBD5E0', fontSize: 8, fontWeight: '700', marginRight: 4 },
+
   metricLabelRow: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginBottom: 20, backgroundColor: '#F7FAFC', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12, width: '100%', borderWidth: 1, borderColor: '#E2E8F0' },
   metricLabelLabel: { color: '#718096', fontSize: 12, fontWeight: '700', marginLeft: 6 },
   metricLabelValue: { color: '#1A202C', fontSize: 12, fontWeight: '800', marginLeft: 4 },
