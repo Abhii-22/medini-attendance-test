@@ -2,7 +2,7 @@ import React, { useState, useRef } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator, Alert, Image, Dimensions, ScrollView } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Location from 'expo-location';
-import { OFFICE_LOCATION } from '@/constants/Location';
+import { OFFICE_LOCATIONS, isUserWithinAnyOffice } from '@/constants/Location';
 import { useAttendance } from '@/constants/AttendanceContext';
 import { useAuth, API_BASE_URL } from '../_layout'; 
 import { Ionicons, MaterialIcons, FontAwesome5 } from '@expo/vector-icons';
@@ -21,6 +21,7 @@ export default function AttendanceScreen() {
   const [base64PhotoData, setBase64PhotoData] = useState<string | null>(null); 
   const [showCamera, setShowCamera] = useState<boolean>(false);
   const [currentDistance, setCurrentDistance] = useState<number | null>(null);
+  const [matchedOfficeName, setMatchedOfficeName] = useState<string>('');
   const [locationAddress, setLocationAddress] = useState<string>('');
   const [currentDateTime, setCurrentDateTime] = useState<string>('');
 
@@ -30,22 +31,11 @@ export default function AttendanceScreen() {
   const employeeId = currentUser?.employeeId || 'N/A';
   const employeeDept = currentUser?.designation || 'Staff Member';
 
-  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
-    const R = 6371e3;
-    const phi1 = (lat1 * Math.PI) / 180;
-    const phi2 = (lat2 * Math.PI) / 180;
-    const deltaPhi = ((lat2 - lat1) * Math.PI) / 180;
-    const deltaLambda = ((lon2 - lon1) * Math.PI) / 180;
-
-    const a = Math.sin(deltaPhi / 2) * Math.sin(deltaPhi / 2) +
-              Math.cos(phi1) * Math.cos(phi2) * Math.sin(deltaLambda / 2) * Math.sin(deltaLambda / 2);
-    return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
-  };
-
   const handleVerifyLocation = async (type: 'LOGIN' | 'LOGOUT') => {
     setLoading(true);
     setAttendanceType(type);
     setCurrentDistance(null);
+    setMatchedOfficeName('');
     setLocationAddress('');
     setLoadingMessage('Acquiring precise satellite location...');
 
@@ -71,8 +61,8 @@ export default function AttendanceScreen() {
       }).catch(async () => {
         return await Location.getLastKnownPositionAsync({}) || {
           coords: {
-            latitude: OFFICE_LOCATION.latitude,
-            longitude: OFFICE_LOCATION.longitude,
+            latitude: OFFICE_LOCATIONS[0].latitude,
+            longitude: OFFICE_LOCATIONS[0].longitude,
             accuracy: 5
           }
         };
@@ -106,23 +96,19 @@ export default function AttendanceScreen() {
         setLocationAddress(fallbackCoords);
       }
 
-      const distance = calculateDistance(
-        position.coords.latitude,
-        position.coords.longitude,
-        OFFICE_LOCATION.latitude,
-        OFFICE_LOCATION.longitude
-      );
-
-      setCurrentDistance(distance);
+      // 🚀 MULTI-LOCATION GEOFENCE CHECK
+      const geofenceResult = isUserWithinAnyOffice(position.coords.latitude, position.coords.longitude);
       const locationAccuracy = position?.coords?.accuracy ?? 0;
 
-      if (distance <= OFFICE_LOCATION.radiusInMeters || locationAccuracy > 100) {
+      if (geofenceResult.isInside || locationAccuracy > 100) {
+        setCurrentDistance(geofenceResult.distance);
+        setMatchedOfficeName(geofenceResult.matchedOffice || 'Authorized Office Node');
         setIsLocationVerified(true);
         setShowCamera(true);
       } else {
         Alert.alert(
           'Out of Range 📍',
-          `Calculated: ${distance.toFixed(0)}m away from office perimeter bounds.`
+          'You are outside the authorized radius of all registered office locations (Bengaluru & Kalaburagi).'
         );
         resetState();
       }
@@ -226,6 +212,7 @@ export default function AttendanceScreen() {
     setBase64PhotoData(null);
     setShowCamera(false);
     setLocationAddress('');
+    setMatchedOfficeName('');
     setLoading(false);
   };
 
@@ -275,8 +262,10 @@ export default function AttendanceScreen() {
               <FontAwesome5 name="building" size={16} color="#007AFF" />
             </View>
             <View style={styles.perimeterTextContent}>
-              <Text style={styles.perimeterTitle}>Assigned Operational Node</Text>
-              <Text style={styles.perimeterSub}>Office Radius Limit: {OFFICE_LOCATION.radiusInMeters} Meters Authorized</Text>
+              <Text style={styles.perimeterTitle}>
+                {matchedOfficeName || 'Authorized Operational Nodes'}
+              </Text>
+              <Text style={styles.perimeterSub}>Multi-Branch Radius Geofence Active</Text>
             </View>
           </View>
 

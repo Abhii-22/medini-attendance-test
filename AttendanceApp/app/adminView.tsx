@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, Text, View, ScrollView, TouchableOpacity, ActivityIndicator, Image } from 'react-native';
+import { StyleSheet, Text, View, ScrollView, TouchableOpacity, ActivityIndicator, Image, Modal } from 'react-native';
 import { useAuth, API_BASE_URL } from './_layout';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -22,6 +22,17 @@ interface AttendanceRecord {
   logoutTime: string;
   capturedPhotoInUri?: string;
   capturedPhotoOutUri?: string;
+  locationInAddress?: string;
+  locationOutAddress?: string;
+}
+
+interface PhotoModalState {
+  visible: boolean;
+  imageUri: string | null;
+  location: string;
+  type: 'LOGIN' | 'LOGOUT';
+  date: string;
+  time: string;
 }
 
 export default function AdminViewScreen() {
@@ -36,6 +47,15 @@ export default function AdminViewScreen() {
   const [attendanceLogs, setAttendanceLogs] = useState<AttendanceRecord[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null); 
+
+  const [modalState, setModalState] = useState<PhotoModalState>({
+    visible: false,
+    imageUri: null,
+    location: '',
+    type: 'LOGIN',
+    date: '',
+    time: ''
+  });
 
   const availableMonths = [
     'January', 'February', 'March', 'April', 'May', 'June', 
@@ -144,6 +164,27 @@ export default function AdminViewScreen() {
 
   const handleToggleLogDrawer = (id: string) => {
     setExpandedLogId(expandedLogId === id ? null : id);
+  };
+
+  const openPhotoModal = (
+    imageUri: string, 
+    location: string | undefined, 
+    type: 'LOGIN' | 'LOGOUT', 
+    date: string, 
+    time: string
+  ) => {
+    setModalState({
+      visible: true,
+      imageUri,
+      location: location || '',
+      type,
+      date,
+      time
+    });
+  };
+
+  const closePhotoModal = () => {
+    setModalState(prev => ({ ...prev, visible: false }));
   };
 
   return (
@@ -272,7 +313,6 @@ export default function AdminViewScreen() {
                   </View>
                   
                   <View style={styles.punchMetricsRow}>
-                    {/* ⏱️ TOTAL WORKING HOURS DURATION DISPLAY BOX */}
                     <View style={[styles.metricBox, { backgroundColor: '#F0FDF4', borderColor: '#DCFCE7' }, isAbsent && { backgroundColor: '#FFF5F5', borderColor: '#FED7D7' }]}>
                       <Text style={[styles.metricLabel, { color: '#16A34A' }, isAbsent && { color: '#E53E3E' }]}>DURATION</Text>
                       <Text style={[styles.metricTime, { color: '#15803D' }, isAbsent && { color: '#E53E3E' }]}>
@@ -299,16 +339,29 @@ export default function AdminViewScreen() {
                   )}
                 </TouchableOpacity>
 
-                {/* EXPANDABLE DUAL PHOTO DRAWER */}
+                {/* EXPANDABLE DUAL PHOTO DRAWER WITH GEOTAG OVERLAY STAMP */}
                 {isExpanded && !isAbsent && (
                   <View style={styles.photoDrawerContainer}>
                     <Text style={styles.drawerLabelTitle}>Biometric Verification Snapshots:</Text>
                     <View style={styles.photoGridRow}>
                       
+                      {/* 📥 PUNCH IN THUMBNAIL */}
                       <View style={styles.photoBlock}>
                         <Text style={styles.photoGridLabel}>📥 Punch In Capture:</Text>
                         {hasInPhoto ? (
-                          <Image source={{ uri: logItem.capturedPhotoInUri }} style={styles.drawerSelfiePreviewImage} />
+                          <TouchableOpacity 
+                            activeOpacity={0.85}
+                            onPress={() => openPhotoModal(logItem.capturedPhotoInUri!, logItem.locationInAddress, 'LOGIN', logItem.date, logItem.loginTime)}
+                            style={styles.imageOverlayWrapper}
+                          >
+                            <Image source={{ uri: logItem.capturedPhotoInUri }} style={styles.drawerSelfiePreviewImage} />
+                            <View style={styles.thumbnailGeotagStamp}>
+                              <Ionicons name="location-sharp" size={9} color="#FFD700" style={{ marginRight: 2 }} />
+                              <Text style={styles.thumbnailGeotagText} numberOfLines={1}>
+                                {logItem.locationInAddress || ''}
+                              </Text>
+                            </View>
+                          </TouchableOpacity>
                         ) : (
                           <View style={styles.noImageDashedPlaceholder}>
                             <Text style={styles.noImagePlaceholderText}>No Punch In Photo</Text>
@@ -316,10 +369,23 @@ export default function AdminViewScreen() {
                         )}
                       </View>
 
+                      {/* 📤 PUNCH OUT THUMBNAIL */}
                       <View style={styles.photoBlock}>
                         <Text style={styles.photoGridLabel}>📤 Punch Out Capture:</Text>
                         {hasOutPhoto ? (
-                          <Image source={{ uri: logItem.capturedPhotoOutUri }} style={styles.drawerSelfiePreviewImage} />
+                          <TouchableOpacity 
+                            activeOpacity={0.85}
+                            onPress={() => openPhotoModal(logItem.capturedPhotoOutUri!, logItem.locationOutAddress, 'LOGOUT', logItem.date, logItem.logoutTime)}
+                            style={styles.imageOverlayWrapper}
+                          >
+                            <Image source={{ uri: logItem.capturedPhotoOutUri }} style={styles.drawerSelfiePreviewImage} />
+                            <View style={styles.thumbnailGeotagStamp}>
+                              <Ionicons name="location-sharp" size={9} color="#FFD700" style={{ marginRight: 2 }} />
+                              <Text style={styles.thumbnailGeotagText} numberOfLines={1}>
+                                {logItem.locationOutAddress || ''}
+                              </Text>
+                            </View>
+                          </TouchableOpacity>
                         ) : (
                           <View style={styles.noImageDashedPlaceholder}>
                             <Text style={styles.noImagePlaceholderText}>No Punch Out Photo</Text>
@@ -336,6 +402,46 @@ export default function AdminViewScreen() {
           })}
         </ScrollView>
       )}
+
+      {/* POPUP MODAL EXCLUSIVELY RENDERS EXACT CAPTURED GEOLOCATION */}
+      <Modal
+        visible={modalState.visible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={closePhotoModal}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCardContainer}>
+            <TouchableOpacity style={styles.modalCloseButton} onPress={closePhotoModal}>
+              <Ionicons name="close-circle" size={32} color="#FFFFFF" />
+            </TouchableOpacity>
+
+            {modalState.imageUri && (
+              <View style={styles.geotagPhotoFrame}>
+                <Image source={{ uri: modalState.imageUri }} style={styles.modalFullImage} />
+
+                <View style={styles.geotagStampOverlay}>
+                  <View style={styles.geotagStampHeader}>
+                    <Ionicons name="location" size={13} color="#FFD700" />
+                    <Text style={styles.geotagStampTitle}>GPS MAP CAMERA</Text>
+                  </View>
+                  
+                  <Text style={styles.geotagStampAddress}>
+                    {modalState.location}
+                  </Text>
+                  
+                  <View style={styles.geotagStampMetaRow}>
+                    <Text style={styles.geotagStampMetaText}>
+                      {modalState.date} • {modalState.time} • {modalState.type} VERIFIED
+                    </Text>
+                  </View>
+                </View>
+
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -383,11 +489,38 @@ const styles = StyleSheet.create({
   photoGridRow: { flexDirection: 'row', justifyContent: 'space-between', width: '100%' },
   photoBlock: { width: '48%' },
   photoGridLabel: { fontSize: 10, fontWeight: '700', color: '#718096', marginBottom: 4 },
-  drawerSelfiePreviewImage: { width: '100%', height: 140, borderRadius: 12, backgroundColor: '#EDF2F7', resizeMode: 'cover' },
+  
+  imageOverlayWrapper: { position: 'relative', overflow: 'hidden', borderRadius: 12 },
+  drawerSelfiePreviewImage: { width: '100%', height: 140, backgroundColor: '#EDF2F7', resizeMode: 'cover' },
+  thumbnailGeotagStamp: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(0, 0, 0, 0.8)', paddingVertical: 4, paddingHorizontal: 6, flexDirection: 'row', alignItems: 'center' },
+  thumbnailGeotagText: { color: '#FFFFFF', fontSize: 8, fontWeight: '700', flex: 1 },
+
   noImageDashedPlaceholder: { width: '100%', height: 140, backgroundColor: '#FFFFFF', borderRadius: 12, borderWidth: 1, borderStyle: 'dashed', borderColor: '#CBD5E0', justifyContent: 'center', alignItems: 'center' },
   noImagePlaceholderText: { color: '#A0AEC0', fontSize: 11, fontWeight: '600', fontStyle: 'italic' },
   loaderCenterFrame: { paddingVertical: 50, alignItems: 'center', justifyContent: 'center' },
   loaderLabelSub: { color: '#718096', fontSize: 13, fontWeight: '600', marginTop: 12 },
   emptyCardFrame: { backgroundColor: '#FFFFFF', padding: 30, borderRadius: 20, alignItems: 'center', borderWidth: 1, borderColor: '#E2E8F0' },
-  emptyTextMessage: { color: '#A0AEC0', fontSize: 13, fontStyle: 'italic', fontWeight: '600', textAlign: 'center' }
+  emptyTextMessage: { color: '#A0AEC0', fontSize: 13, fontStyle: 'italic', fontWeight: '600', textAlign: 'center' },
+
+  /* POPUP MODAL & GEOTAG OVERLAY STYLES */
+  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', alignItems: 'center', padding: 16 },
+  modalCardContainer: { width: '100%', maxWidth: 360, alignItems: 'center', position: 'relative' },
+  modalCloseButton: { position: 'absolute', top: -45, right: 0, zIndex: 10 },
+  
+  geotagPhotoFrame: { width: '100%', height: 460, borderRadius: 20, overflow: 'hidden', position: 'relative', backgroundColor: '#000', borderWidth: 2, borderColor: '#FFFFFF' },
+  modalFullImage: { width: '100%', height: '100%', resizeMode: 'cover' },
+
+  geotagStampOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(18, 18, 18, 0.88)',
+    padding: 12,
+  },
+  geotagStampHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
+  geotagStampTitle: { color: '#FFD700', fontSize: 10, fontWeight: '900', marginLeft: 5, letterSpacing: 0.8 },
+  geotagStampAddress: { color: '#FFFFFF', fontSize: 10, fontWeight: '600', lineHeight: 14, marginBottom: 8 },
+  geotagStampMetaRow: { borderTopWidth: 1, borderTopColor: 'rgba(255, 255, 255, 0.2)', paddingTop: 6 },
+  geotagStampMetaText: { color: '#E2E8F0', fontSize: 9, fontWeight: '700', letterSpacing: 0.2 }
 });
