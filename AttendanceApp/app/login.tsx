@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { StyleSheet, Text, View, TextInput, TouchableOpacity, Alert, KeyboardAvoidingView, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import { useAuth, API_BASE_URL } from './_layout'; 
 
 export default function LoginScreen() {
@@ -10,6 +11,7 @@ export default function LoginScreen() {
   const [loginMode, setLoginMode] = useState<'EMPLOYEE' | 'ADMIN_VIEW' | 'ADMIN_PANEL'>('EMPLOYEE');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
   const handleAuthenticationSubmit = async () => {
@@ -34,50 +36,46 @@ export default function LoginScreen() {
       const result = await response.json();
 
       if (response.ok && result.success) {
-        // 👑 SAFELY PARSE ARRAY PRIVILEGES: Converts any format securely into an array string reference lookup map
         const rolesArray: string[] = result.user && Array.isArray(result.user.role)
           ? result.user.role
           : result.user?.role
             ? [result.user.role]
             : [];
         
-        // 🚀 UPDATED LAYER: Validate matching authorization parameters against array mappings
         if (loginMode === 'EMPLOYEE' && rolesArray.includes('ADMIN_VIEW') && !rolesArray.includes('EMPLOYEE')) {
           Alert.alert(
-            'Access Denied 🔐',
+            'Access Denied',
             'This account has Administrative View status. Please use the "Admin View" tab to sign in.'
           );
           setIsLoading(false);
           return;
         }
 
-        // 👁️ Supervisor Role Interceptor
         if (loginMode === 'ADMIN_VIEW' && !rolesArray.includes('ADMIN_VIEW')) {
           Alert.alert(
-            'Access Denied 🔐',
+            'Access Denied',
             'This account does not have supervisor monitoring clearance.'
           );
           setIsLoading(false);
           return;
         }
 
-        // Route clean validated handshakes safely[cite: 2]
         if (loginMode === 'ADMIN_VIEW') {
-          login(result.user, result.isAdmin, 'adminView'); //[cite: 2]
+          login(result.user, result.isAdmin, 'adminView');
         } else if (loginMode === 'ADMIN_PANEL') {
-          login(result.user, result.isAdmin, 'admin'); //[cite: 2]
+          login(result.user, result.isAdmin, 'admin');
         } else {
-          login(result.user, result.isAdmin); //[cite: 2]
+          login(result.user, result.isAdmin);
         }
         
         setEmail('');
         setPassword('');
       } else {
-        Alert.alert('Access Denied 🔐', result.message || 'Invalid credentials matching this context.[cite: 2]');
+        Alert.alert('Access Denied', result.message || 'Invalid credentials matching this context.');
       }
     } catch (error) {
-      console.error('Login Network Error:', error); //[cite: 2]
-      Alert.alert('Connection Error 📡', 'Could not reach the attendance server.[cite: 2]');
+      console.error('Login Network Error:', error);
+      Alert.alert('Connection Error', 'Could not reach the attendance server.');
     } finally {
       setIsLoading(false);
     }
@@ -86,7 +84,7 @@ export default function LoginScreen() {
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.container}>
       <View style={styles.brandContainer}>
-        <Text style={styles.brandLogo}>🛡️</Text>
+        <Ionicons name="shield-checkmark" size={48} color="#007AFF" style={{ marginBottom: 10 }} />
         <Text style={styles.brandName}>Employee Attendance</Text>
         <Text style={styles.brandSubtext}>Cloud-Synchronized Management Hub</Text>
       </View>
@@ -112,10 +110,33 @@ export default function LoginScreen() {
         <TextInput style={styles.inputField} value={email} onChangeText={setEmail} placeholder={loginMode === 'EMPLOYEE' ? 'name@company.com' : 'admin@medini.com'} placeholderTextColor="#A0AEC0" keyboardType="email-address" autoCapitalize="none" editable={!isLoading} />
 
         <Text style={styles.inputLabel}>Secure Password</Text>
-        <TextInput style={styles.inputField} value={password} onChangeText={setPassword} placeholder="••••••••" placeholderTextColor="#A0AEC0" secureTextEntry autoCapitalize="none" editable={!isLoading} />
+        <View style={styles.passwordContainer}>
+          <TextInput 
+            style={styles.passwordInputField} 
+            value={password} 
+            onChangeText={setPassword} 
+            placeholder="••••••••" 
+            placeholderTextColor="#A0AEC0" 
+            secureTextEntry={!showPassword} 
+            autoCapitalize="none" 
+            editable={!isLoading} 
+          />
+          <TouchableOpacity 
+            style={styles.eyeBtn} 
+            onPress={() => setShowPassword(!showPassword)} 
+            disabled={isLoading}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Ionicons 
+              name={showPassword ? "eye-outline" : "eye-off-outline"} 
+              size={20} 
+              color="#718096" 
+            />
+          </TouchableOpacity>
+        </View>
 
         <TouchableOpacity style={[styles.primaryAuthBtn, isLoading && { opacity: 0.6 }]} activeOpacity={0.8} onPress={handleAuthenticationSubmit} disabled={isLoading}>
-          <Text style={styles.primaryAuthBtnText}>{isLoading ? 'Verifying... ⏳' : 'Secure Login 🔐'}</Text>
+          <Text style={styles.primaryAuthBtnText}>{isLoading ? 'Verifying...' : 'Secure Login'}</Text>
         </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>
@@ -125,7 +146,6 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F4F7FA', justifyContent: 'center', paddingHorizontal: 16 },
   brandContainer: { alignItems: 'center', marginBottom: 35 },
-  brandLogo: { fontSize: 44, marginBottom: 10 },
   brandName: { fontSize: 24, fontWeight: '800', color: '#1A202C' },
   brandSubtext: { fontSize: 13, color: '#718096', marginTop: 4, fontWeight: '500' },
   tabToggleRow: { flexDirection: 'row', backgroundColor: '#E2E8F0', padding: 4, borderRadius: 12, marginBottom: 16 },
@@ -137,6 +157,9 @@ const styles = StyleSheet.create({
   formContextTitle: { fontSize: 14, fontWeight: '700', color: '#4A5568', textAlign: 'center', marginBottom: 20 },
   inputLabel: { fontSize: 12, fontWeight: '700', color: '#718096', marginBottom: 6, marginTop: 12, textTransform: 'uppercase', letterSpacing: 0.3 },
   inputField: { backgroundColor: '#F7FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 14, fontSize: 15, color: '#2D3748' },
+  passwordContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F7FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 12 },
+  passwordInputField: { flex: 1, paddingHorizontal: 14, paddingVertical: 14, fontSize: 15, color: '#2D3748' },
+  eyeBtn: { paddingHorizontal: 14, paddingVertical: 14, justifyContent: 'center', alignItems: 'center' },
   primaryAuthBtn: { backgroundColor: '#007AFF', paddingVertical: 16, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginTop: 25, shadowColor: '#007AFF', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 10 },
   primaryAuthBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' }
 });

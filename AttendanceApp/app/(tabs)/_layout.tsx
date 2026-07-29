@@ -1,9 +1,11 @@
 import { Tabs } from 'expo-router';
 import React from 'react';
-// 🌟 Native React Vector Icons
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function TabLayout() {
+  const insets = useSafeAreaInsets();
+
   return (
     <Tabs
       screenOptions={{
@@ -11,7 +13,12 @@ export default function TabLayout() {
         tabBarInactiveTintColor: '#8E8E93',
         headerStyle: { backgroundColor: '#FFFFFF' },
         headerShadowVisible: false,
-        tabBarStyle: { height: 60, paddingBottom: 8 },
+        tabBarStyle: { 
+          // 🚀 Dynamically adjusts tab bar height based on bottom navigation buttons/gesture bar
+          height: 60 + insets.bottom, 
+          paddingBottom: 8 + insets.bottom,
+          paddingTop: 6,
+        },
       }}
     >
       {/* 🏠 Home Tab */}
@@ -63,7 +70,6 @@ export default function TabLayout() {
       />
 
       {/* 🛑 HIDDEN ABSOLUTE BLOCKER FOR THE EXPLORE TAB */}
-      {/* This href: null line completely deletes the button from your layout screen */}
       <Tabs.Screen 
         name="explore" 
         options={{ 
