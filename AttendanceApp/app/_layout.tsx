@@ -3,7 +3,9 @@ import { Slot, useRouter, useSegments } from 'expo-router';
 import { AttendanceProvider } from '@/constants/AttendanceContext';
 
 // 🌐 Global Production Cloud URL for your hosted Render Web Service API
-export const API_BASE_URL = 'https://employeeattendance-1iiy.onrender.com/api';
+// export const API_BASE_URL = 'https://employeeattendance-1iiy.onrender.com/api';
+export const API_BASE_URL = 'https://attentdanceapi.techvruddhi.com/api'; // 🏡 Local Development URL (replace with your machine's IP)
+
 
 interface AuthContextType {
   isAuthenticated: boolean;
