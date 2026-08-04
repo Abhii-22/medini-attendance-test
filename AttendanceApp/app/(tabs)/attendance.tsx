@@ -24,6 +24,7 @@ export default function AttendanceScreen() {
   const [matchedOfficeName, setMatchedOfficeName] = useState<string>('');
   const [locationAddress, setLocationAddress] = useState<string>('');
   const [currentDateTime, setCurrentDateTime] = useState<string>('');
+  const [isMocked, setIsMocked] = useState<boolean>(false);
 
   const cameraRef = useRef<any>(null);
 
@@ -37,6 +38,7 @@ export default function AttendanceScreen() {
     setCurrentDistance(null);
     setMatchedOfficeName('');
     setLocationAddress('');
+    setIsMocked(false);
     setLoadingMessage('Acquiring precise satellite location...');
 
     try {
@@ -59,14 +61,25 @@ export default function AttendanceScreen() {
       const position = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.High,
       }).catch(async () => {
-        return await Location.getLastKnownPositionAsync({}) || {
-          coords: {
-            latitude: OFFICE_LOCATIONS[0].latitude,
-            longitude: OFFICE_LOCATIONS[0].longitude,
-            accuracy: 5
-          }
-        };
+        return await Location.getLastKnownPositionAsync({}) || null;
       });
+
+      if (!position) {
+        Alert.alert('Location Error 📡', 'Unable to retrieve precise GPS coordinates. Please ensure GPS is turned on.');
+        setLoading(false);
+        return;
+      }
+
+      // 🛡️ REJECT FAKE GPS / MOCK LOCATION IMMEDIATELY
+      if (position.mocked) {
+        setIsMocked(true);
+        Alert.alert(
+          'Security Policy Violation 🚫',
+          'Mock Location / Fake GPS detected on your device. Please disable Developer Mode / Fake GPS options to punch in.'
+        );
+        resetState();
+        return;
+      }
 
       const now = new Date();
       const dateStr = now.toLocaleDateString('en-GB');
@@ -108,7 +121,7 @@ export default function AttendanceScreen() {
       } else {
         Alert.alert(
           'Out of Range 📍',
-          'You are outside the authorized radius of all registered office locations (Bengaluru & Kalaburagi).'
+          'You are outside the authorized radius of all registered office locations.'
         );
         resetState();
       }
@@ -179,7 +192,8 @@ export default function AttendanceScreen() {
           name: employeeName,
           type: type,
           photoUri: photoPayloadString,
-          locationAddress: addressString
+          locationAddress: addressString,
+          isMocked: isMocked // 👈 Transmit mock location flag to backend guard
         })
       });
 
@@ -191,7 +205,7 @@ export default function AttendanceScreen() {
         Alert.alert('Success 🎉', `Log successfully synchronized permanently.`);
         resetState();
       } else {
-        Alert.alert('Upload Failed', result.message || 'Server rejected storage process.');
+        Alert.alert('Upload Failed 🚫', result.message || 'Server rejected storage process.');
         setLoading(false);
       }
     } catch (error: any) {
@@ -213,6 +227,7 @@ export default function AttendanceScreen() {
     setShowCamera(false);
     setLocationAddress('');
     setMatchedOfficeName('');
+    setIsMocked(false);
     setLoading(false);
   };
 
