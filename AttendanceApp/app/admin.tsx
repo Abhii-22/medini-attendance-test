@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert, Linking, ActivityIndicator } from 'react-native';
+import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert, Linking, ActivityIndicator, Modal } from 'react-native';
 import { useAuth, API_BASE_URL } from './_layout';
 import { Ionicons, FontAwesome5, MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
 
@@ -10,7 +10,8 @@ interface EmployeeProfile {
   designation: string;
   email: string;
   password?: string;
-  role?: string[]; // Defined explicitly as an array of strings
+  lunchBreakMinutes?: number;
+  role?: string[];
 }
 
 interface AttendanceRecord {
@@ -48,6 +49,13 @@ export default function AdminScreen() {
   const [empDesignation, setEmpDesignation] = useState('');
   const [empEmail, setEmpEmail] = useState('');
   const [empPassword, setEmpPassword] = useState('');
+  
+  // 🍱 DROPDOWN LUNCH TIMING SELECTION STATES
+  const [selectedLunchHours, setSelectedLunchHours] = useState<number>(0);
+  const [selectedLunchMins, setSelectedLunchMins] = useState<number>(30);
+  const [showHoursDropdown, setShowHoursDropdown] = useState<boolean>(false);
+  const [showMinsDropdown, setShowMinsDropdown] = useState<boolean>(false);
+
   const [showEmpPassword, setShowEmpPassword] = useState<boolean>(false);
 
   const [adminName, setAdminName] = useState('');
@@ -62,23 +70,47 @@ export default function AdminScreen() {
     'July', 'August', 'September', 'October', 'November', 'December'
   ];
 
-  const calculateWorkingHours = (inTime: string, outTime: string) => {
+  const hoursList = Array.from({ length: 13 }, (_, i) => i);
+  const minutesList = Array.from({ length: 60 }, (_, i) => i);
+
+  // ⏱️ ACCURATE WORKING HOURS CALCULATOR WITH LUNCH DEDUCTION
+  const calculateWorkingHours = (inTime: string, outTime: string, employeeNameTarget?: string) => {
     if (!inTime || !outTime || inTime === '--:--' || outTime === '--:--' || inTime === 'ABSENT' || outTime === 'ABSENT') {
       return '--';
     }
     try {
       const parseTimeToMinutes = (timeStr: string) => {
-        const [time, modifier] = timeStr.split(' ');
-        let [hours, minutes] = time.split(':').map(Number);
-        if (modifier === 'PM' && hours < 12) hours += 12;
-        if (modifier === 'AM' && hours === 12) hours = 0;
+        const cleanTime = timeStr.trim().toUpperCase();
+        const isPM = cleanTime.includes('PM');
+        const isAM = cleanTime.includes('AM');
+        
+        const timeOnly = cleanTime.replace(/(AM|PM)/g, '').trim();
+        const parts = timeOnly.split(/[:\.]/).map(Number);
+        
+        let hours = parts[0] || 0;
+        const minutes = parts[1] || 0;
+
+        if (isPM && hours < 12) hours += 12;
+        if (isAM && hours === 12) hours = 0;
+
         return hours * 60 + minutes;
       };
 
-      const diffInMinutes = parseTimeToMinutes(outTime) - parseTimeToMinutes(inTime);
-      if (diffInMinutes <= 0) return '0h 0m';
+      const inMins = parseTimeToMinutes(inTime);
+      const outMins = parseTimeToMinutes(outTime);
 
-      return `${Math.floor(diffInMinutes / 60)}h ${diffInMinutes % 60}m`;
+      const grossMinutes = outMins - inMins;
+      if (grossMinutes <= 0) return '0h 0m';
+
+      // Find exact lunch break duration for employee
+      const matchedEmp = employees.find(e => e.name?.toLowerCase().trim() === employeeNameTarget?.toLowerCase().trim());
+      const lunchDeduction = matchedEmp?.lunchBreakMinutes !== undefined 
+        ? Number(matchedEmp.lunchBreakMinutes) 
+        : (selectedLunchHours * 60 + selectedLunchMins);
+
+      const netMinutes = grossMinutes >= lunchDeduction ? grossMinutes - lunchDeduction : 0;
+
+      return `${Math.floor(netMinutes / 60)}h ${netMinutes % 60}m`;
     } catch (e) {
       return '--';
     }
@@ -112,9 +144,8 @@ export default function AdminScreen() {
   };
 
   useEffect(() => {
-    if (activeTab === 'REGISTER') {
-      fetchEmployeesList();
-    } else {
+    fetchEmployeesList();
+    if (activeTab === 'LOGS') {
       fetchAttendanceLogs(selectedEmpFilter);
     }
   }, [activeTab, selectedEmpFilter]);
@@ -132,7 +163,6 @@ export default function AdminScreen() {
 
   const filteredLogs = getFilteredLogs();
 
-  // 🔍 FILTERED EMPLOYEES BY SEARCH QUERY
   const searchedEmployees = employees.filter((emp) => {
     if (!empSearchQuery.trim()) return true;
     const q = empSearchQuery.toLowerCase().trim();
@@ -144,7 +174,6 @@ export default function AdminScreen() {
     );
   });
 
-  // 🔍 FILTER WORKFORCE PILLS LIST BASED ON LOG SEARCH QUERY
   const filteredWorkforceEmployees = employees.filter(e => {
     const r: string[] = Array.isArray(e.role) ? e.role : [e.role || 'EMPLOYEE'];
     if (r.includes('ADMIN_VIEW')) return false;
@@ -157,7 +186,6 @@ export default function AdminScreen() {
     );
   });
 
-  // 🔍 FILTERED LOGS BY SEARCH QUERY
   const searchedLogs = filteredLogs.filter((log) => {
     if (!logSearchQuery.trim()) return true;
     const q = logSearchQuery.toLowerCase().trim();
@@ -170,7 +198,6 @@ export default function AdminScreen() {
     );
   });
 
-  // 🔄 AUTO-UPDATE SELECTED WORKFORCE FILTER WHEN USER TYPES A MATCHING NAME
   const handleLogSearchChange = (text: string) => {
     setLogSearchQuery(text);
     if (!text.trim()) {
@@ -186,37 +213,47 @@ export default function AdminScreen() {
   };
 
   const handleCreateEmployeeSubmit = async () => {
-    if (!empName || !empIdCode || !empDesignation || !empEmail || !empPassword) {
-      Alert.alert('Missing Fields', 'Please fill out all fields inside the Employee form.');
+    // Password required for new profiles, optional during edits
+    if (!empName || !empIdCode || !empDesignation || !empEmail || (!isEditing && !empPassword)) {
+      Alert.alert('Missing Fields', 'Please fill out all required fields inside the Employee form.');
       return;
     }
 
-    const payload = {
+    const calculatedTotalLunchMinutes = Number(selectedLunchHours) * 60 + Number(selectedLunchMins);
+
+    const payload: any = {
       name: empName.trim(),
       employeeId: empIdCode.trim().toUpperCase(),
       designation: empDesignation.trim(),
       email: empEmail.trim().toLowerCase(),
-      password: empPassword,
+      lunchBreakMinutes: calculatedTotalLunchMinutes,
       role: 'EMPLOYEE'
     };
+
+    if (empPassword) {
+      payload.password = empPassword;
+    }
 
     executeServerProvisioning(payload, empName.trim());
   };
 
   const handleCreateAdminViewSubmit = async () => {
-    if (!adminName || !adminIdCode || !adminDesignation || !adminEmail || !adminPassword) {
+    if (!adminName || !adminIdCode || !adminDesignation || !adminEmail || (!isEditing && !adminPassword)) {
       Alert.alert('Missing Fields', 'Please fill out all fields inside the Admin View Supervisor form.');
       return;
     }
 
-    const payload = {
+    const payload: any = {
       name: adminName.trim(),
       employeeId: adminIdCode.trim().toUpperCase(),
       designation: adminDesignation.trim(),
       email: adminEmail.trim().toLowerCase(),
-      password: adminPassword,
       role: 'ADMIN_VIEW'
     };
+
+    if (adminPassword) {
+      payload.password = adminPassword;
+    }
 
     executeServerProvisioning(payload, adminName.trim());
   };
@@ -242,7 +279,7 @@ export default function AdminScreen() {
 
       const result = await response.json();
 
-      if (response.ok && (result.success || result._id)) {
+      if (response.ok && (result.success || result._id || result.employee)) {
         Alert.alert('Success 🎉', isEditing ? 'Account profile updated.' : `Credentials deployed for ${targetedName}.`);
         clearAllFormStates();
         fetchEmployeesList();
@@ -275,6 +312,10 @@ export default function AdminScreen() {
       setEmpDesignation(item.designation);
       setEmpEmail(item.email);
       setEmpPassword(item.password || '');
+      
+      const totalMins = item.lunchBreakMinutes !== undefined ? Number(item.lunchBreakMinutes) : 0;
+      setSelectedLunchHours(Math.floor(totalMins / 60));
+      setSelectedLunchMins(totalMins % 60);
     }
   };
 
@@ -307,7 +348,8 @@ export default function AdminScreen() {
   const clearAllFormStates = () => {
     setIsEditing(false);
     setEditingTargetId(null);
-    setEmpName(''); setEmpIdCode(''); setEmpDesignation(''); setEmpEmail(''); setEmpPassword('');
+    setEmpName(''); setEmpIdCode(''); setEmpDesignation(''); setEmpEmail(''); setEmpPassword(''); 
+    setSelectedLunchHours(0); setSelectedLunchMins(30);
     setShowEmpPassword(false);
     setAdminName(''); setAdminIdCode(''); setAdminDesignation(''); setAdminEmail(''); setAdminPassword('');
     setShowAdminPassword(false);
@@ -399,13 +441,45 @@ export default function AdminScreen() {
               <Text style={styles.inputLabel}>Official Email Address</Text>
               <TextInput style={styles.input} value={empEmail} onChangeText={setEmpEmail} placeholder="worker@medini.com" placeholderTextColor="#A0AEC0" keyboardType="email-address" autoCapitalize="none" />
 
-              <Text style={styles.inputLabel}>Access Password</Text>
+              {/* 🍱 DROPDOWN LUNCH BREAK SELECTION */}
+              <Text style={styles.inputLabel}>Set Fixed Lunch Break Duration</Text>
+              <View style={styles.dropdownPickerRow}>
+                
+                <View style={{ width: '48%' }}>
+                  <Text style={styles.subInputLabel}>Hours (0 - 12)</Text>
+                  <TouchableOpacity 
+                    style={styles.dropdownTriggerBtn} 
+                    onPress={() => setShowHoursDropdown(true)}
+                  >
+                    <Text style={styles.dropdownValueText}>{selectedLunchHours} {selectedLunchHours === 1 ? 'Hour' : 'Hours'}</Text>
+                    <Ionicons name="chevron-down" size={16} color="#718096" />
+                  </TouchableOpacity>
+                </View>
+
+                <View style={{ width: '48%' }}>
+                  <Text style={styles.subInputLabel}>Minutes (0 - 59)</Text>
+                  <TouchableOpacity 
+                    style={styles.dropdownTriggerBtn} 
+                    onPress={() => setShowMinsDropdown(true)}
+                  >
+                    <Text style={styles.dropdownValueText}>{selectedLunchMins} Mins</Text>
+                    <Ionicons name="chevron-down" size={16} color="#718096" />
+                  </TouchableOpacity>
+                </View>
+
+              </View>
+
+              <Text style={styles.lunchSummaryNote}>
+                Total Deduction: {selectedLunchHours > 0 ? `${selectedLunchHours}h ` : ''}{selectedLunchMins}m per shift
+              </Text>
+
+              <Text style={styles.inputLabel}>Access Password {isEditing ? '(Optional)' : ''}</Text>
               <View style={styles.passwordInputContainer}>
                 <TextInput
                   style={styles.passwordInput}
                   value={empPassword}
                   onChangeText={setEmpPassword}
-                  placeholder="••••••••"
+                  placeholder={isEditing ? 'Leave blank to keep unchanged' : '••••••••'}
                   placeholderTextColor="#A0AEC0"
                   secureTextEntry={!showEmpPassword}
                   autoCapitalize="none"
@@ -463,13 +537,13 @@ export default function AdminScreen() {
               <Text style={styles.inputLabel}>Supervisor Login Email</Text>
               <TextInput style={styles.input} value={adminEmail} onChangeText={setAdminEmail} placeholder="supervisor@medini.com" placeholderTextColor="#A0AEC0" keyboardType="email-address" autoCapitalize="none" />
 
-              <Text style={styles.inputLabel}>Admin Access Password</Text>
+              <Text style={styles.inputLabel}>Admin Access Password {isEditing ? '(Optional)' : ''}</Text>
               <View style={styles.passwordInputContainer}>
                 <TextInput
                   style={styles.passwordInput}
                   value={adminPassword}
                   onChangeText={setAdminPassword}
-                  placeholder="••••••••"
+                  placeholder={isEditing ? 'Leave blank to keep unchanged' : '••••••••'}
                   placeholderTextColor="#A0AEC0"
                   secureTextEntry={!showAdminPassword}
                   autoCapitalize="none"
@@ -543,7 +617,10 @@ export default function AdminScreen() {
                     </View>
                     <View style={styles.employeeInfoBox}>
                       <Text style={styles.empRowName}>{item.name} <Text style={styles.empRowId}>({item.employeeId})</Text></Text>
-                      <Text style={styles.empRowSub}>{item.designation}  •  <Text style={{ fontWeight: '800' }}>{isAdminView ? 'ADMIN_VIEW' : 'EMPLOYEE'}</Text></Text>
+                      <Text style={styles.empRowSub}>
+                        {item.designation}  •  <Text style={{ fontWeight: '800' }}>{isAdminView ? 'ADMIN_VIEW' : 'EMPLOYEE'}</Text>
+                        {item.lunchBreakMinutes !== undefined ? ` • ${item.lunchBreakMinutes}m Lunch` : ''}
+                      </Text>
                     </View>
                     <View style={styles.crudActionRow}>
                       <TouchableOpacity style={styles.actionPillEdit} onPress={() => handleSelectEditEmployee(item)}>
@@ -563,13 +640,11 @@ export default function AdminScreen() {
 
       {activeTab === 'LOGS' && (
         <View style={{ flex: 1 }}>
-          {/* 🔍 WORKFORCE FILTERING FOCUS SECTION */}
           <View style={styles.sectionHeaderRowInline}>
             <Ionicons name="filter" size={14} color="#2B6CB0" />
             <Text style={styles.sectionHeadingLabelInline}>Workforce Filtering Focus</Text>
           </View>
 
-          {/* SEARCH BAR INSIDE WORKFORCE FILTERING FOCUS */}
           <View style={styles.searchBarContainer}>
             <Ionicons name="search-outline" size={16} color="#718096" style={{ marginRight: 8 }} />
             <TextInput
@@ -586,7 +661,6 @@ export default function AdminScreen() {
             )}
           </View>
 
-          {/* WORKFORCE FILTER PILLS INTACT & FILTERED BY SEARCH */}
           <View style={styles.pillScrollFrame}>
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
               <TouchableOpacity 
@@ -662,7 +736,7 @@ export default function AdminScreen() {
                       <View style={[styles.metricBox, { backgroundColor: '#F0FDF4', borderColor: '#DCFCE7' }]}>
                         <Text style={[styles.metricLabel, { color: '#16A34A' }]}>HOURS WORKED</Text>
                         <Text style={[styles.metricTime, { color: '#15803D' }]}>
-                          {calculateWorkingHours(logItem.loginTime, logItem.logoutTime)}
+                          {calculateWorkingHours(logItem.loginTime, logItem.logoutTime, logItem.employeeName)}
                         </Text>
                       </View>
                       <View style={[styles.metricBox, isAbsent && { borderColor: '#FEB2B2', backgroundColor: '#FFF5F5' }]}>
@@ -681,6 +755,69 @@ export default function AdminScreen() {
           </ScrollView>
         </View>
       )}
+
+      {/* 🍱 HOURS SELECTION DROPDOWN MODAL */}
+      <Modal
+        visible={showHoursDropdown}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowHoursDropdown(false)}
+      >
+        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowHoursDropdown(false)}>
+          <View style={styles.dropdownModalCard}>
+            <Text style={styles.dropdownModalTitle}>Select Lunch Break Hours</Text>
+            <ScrollView style={{ maxHeight: 250 }}>
+              {hoursList.map(h => (
+                <TouchableOpacity
+                  key={h}
+                  style={[styles.dropdownItem, selectedLunchHours === h && styles.activeDropdownItem]}
+                  onPress={() => {
+                    setSelectedLunchHours(h);
+                    setShowHoursDropdown(false);
+                  }}
+                >
+                  <Text style={[styles.dropdownItemText, selectedLunchHours === h && styles.activeDropdownItemText]}>
+                    {h} {h === 1 ? 'Hour' : 'Hours'}
+                  </Text>
+                  {selectedLunchHours === h && <Ionicons name="checkmark" size={16} color="#007AFF" />}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* 🍱 MINUTES SELECTION DROPDOWN MODAL */}
+      <Modal
+        visible={showMinsDropdown}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowMinsDropdown(false)}
+      >
+        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowMinsDropdown(false)}>
+          <View style={styles.dropdownModalCard}>
+            <Text style={styles.dropdownModalTitle}>Select Lunch Break Minutes</Text>
+            <ScrollView style={{ maxHeight: 250 }}>
+              {minutesList.map(m => (
+                <TouchableOpacity
+                  key={m}
+                  style={[styles.dropdownItem, selectedLunchMins === m && styles.activeDropdownItem]}
+                  onPress={() => {
+                    setSelectedLunchMins(m);
+                    setShowMinsDropdown(false);
+                  }}
+                >
+                  <Text style={[styles.dropdownItemText, selectedLunchMins === m && styles.activeDropdownItemText]}>
+                    {m} {m === 1 ? 'Minute' : 'Minutes'}
+                  </Text>
+                  {selectedLunchMins === m && <Ionicons name="checkmark" size={16} color="#007AFF" />}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
     </View>
   );
 }
@@ -708,9 +845,14 @@ const styles = StyleSheet.create({
   cardHeaderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
   sectionHeading: { fontSize: 13, fontWeight: '800', color: '#007AFF', textTransform: 'uppercase', letterSpacing: 0.5, marginLeft: 6 },
   inputLabel: { fontSize: 11, fontWeight: '700', color: '#718096', marginBottom: 5, marginTop: 10, textTransform: 'uppercase', letterSpacing: 0.3 },
+  subInputLabel: { fontSize: 10, fontWeight: '700', color: '#A0AEC0', marginBottom: 4, textTransform: 'uppercase' },
   input: { backgroundColor: '#F7FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 14, color: '#2D3748', marginBottom: 4 },
   
-  /* 🔍 SEARCH BAR STYLES */
+  dropdownPickerRow: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginBottom: 4 },
+  dropdownTriggerBtn: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#F7FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12 },
+  dropdownValueText: { fontSize: 13, fontWeight: '700', color: '#2D3748' },
+  lunchSummaryNote: { fontSize: 11, color: '#007AFF', fontWeight: '800', marginTop: 4, marginBottom: 6 },
+
   searchBarContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#CBD5E0', borderRadius: 12, paddingHorizontal: 12, height: 42, marginBottom: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.02, shadowRadius: 3, elevation: 1 },
   searchInput: { flex: 1, fontSize: 13, color: '#2D3748', fontWeight: '600' },
 
@@ -763,5 +905,13 @@ const styles = StyleSheet.create({
   loaderLabelSub: { color: '#718096', fontSize: 12, fontWeight: '600', marginTop: 12 },
   emptyCardFrame: { backgroundColor: '#FFFFFF', padding: 30, borderRadius: 16, alignItems: 'center', borderWidth: 1, borderColor: '#E2E8F0' },
   emptyTextMessage: { color: '#A0AEC0', fontSize: 12, fontStyle: 'italic', fontWeight: '600', textAlign: 'center', marginTop: 4 },
-  emptyTextSub: { color: '#A0AEC0', fontSize: 12, fontWeight: '600', textAlign: 'center', marginVertical: 15, fontStyle: 'italic' }
+  emptyTextSub: { color: '#A0AEC0', fontSize: 12, fontWeight: '600', textAlign: 'center', marginVertical: 15, fontStyle: 'italic' },
+
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 20 },
+  dropdownModalCard: { width: '85%', maxWidth: 300, backgroundColor: '#FFFFFF', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: '#E2E8F0', elevation: 5 },
+  dropdownModalTitle: { fontSize: 13, fontWeight: '800', color: '#1A202C', marginBottom: 12, textTransform: 'uppercase', textAlign: 'center' },
+  dropdownItem: { paddingVertical: 12, paddingHorizontal: 16, borderBottomWidth: 1, borderBottomColor: '#EDF2F7', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  activeDropdownItem: { backgroundColor: '#EBF8FF' },
+  dropdownItemText: { fontSize: 13, color: '#4A5568', fontWeight: '600' },
+  activeDropdownItemText: { color: '#007AFF', fontWeight: '800' }
 });

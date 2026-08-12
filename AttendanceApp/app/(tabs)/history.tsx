@@ -27,10 +27,10 @@ interface PhotoModalState {
 export default function HistoryScreen() {
   const { currentUser } = useAuth();
   const [cloudLogs, setCloudLogs] = useState<BackendLog[]>([]);
+  const [employeeLunchMins, setEmployeeLunchMins] = useState<number>(0);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
 
-  // 📅 CALENDAR FILTER STATES
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [isCalendarVisible, setIsCalendarVisible] = useState<boolean>(false);
   const [calendarViewDate, setCalendarViewDate] = useState<Date>(new Date());
@@ -44,25 +44,71 @@ export default function HistoryScreen() {
     time: ''
   });
 
-  const calculateWorkingHours = (inTime: string, outTime: string) => {
+  // ⏱️ ACCURATE WORKING HOURS CALCULATOR WITH LUNCH DEDUCTION
+  const calculateWorkingHours = (inTime: string, outTime: string, lunchBreakMinutes: number = 0) => {
     if (!inTime || !outTime || inTime === '--:--' || outTime === '--:--' || inTime === 'ABSENT' || outTime === 'ABSENT') {
       return '--';
     }
     try {
       const parseTimeToMinutes = (timeStr: string) => {
-        const [time, modifier] = timeStr.split(' ');
-        let [hours, minutes] = time.split(':').map(Number);
-        if (modifier === 'PM' && hours < 12) hours += 12;
-        if (modifier === 'AM' && hours === 12) hours = 0;
+        const cleanTime = timeStr.trim().toUpperCase();
+        const isPM = cleanTime.includes('PM');
+        const isAM = cleanTime.includes('AM');
+        
+        const timeOnly = cleanTime.replace(/(AM|PM)/g, '').trim();
+        const parts = timeOnly.split(/[:\.]/).map(Number);
+        
+        let hours = parts[0] || 0;
+        const minutes = parts[1] || 0;
+
+        if (isPM && hours < 12) hours += 12;
+        if (isAM && hours === 12) hours = 0;
+
         return hours * 60 + minutes;
       };
 
-      const diffInMinutes = parseTimeToMinutes(outTime) - parseTimeToMinutes(inTime);
-      if (diffInMinutes <= 0) return '0h 0m';
+      const inMins = parseTimeToMinutes(inTime);
+      const outMins = parseTimeToMinutes(outTime);
 
-      return `${Math.floor(diffInMinutes / 60)}h ${diffInMinutes % 60}m`;
+      const grossMinutes = outMins - inMins;
+      if (grossMinutes <= 0) return '0h 0m';
+
+      const netMinutes = grossMinutes >= lunchBreakMinutes ? grossMinutes - lunchBreakMinutes : 0;
+
+      return `${Math.floor(netMinutes / 60)}h ${netMinutes % 60}m`;
     } catch (e) {
       return '--';
+    }
+  };
+
+  const fetchEmployeeLunchProfile = async () => {
+    if (!currentUser) return;
+
+    // Check if currentUser context already has lunchBreakMinutes stored
+    if (currentUser.lunchBreakMinutes !== undefined) {
+      setEmployeeLunchMins(Number(currentUser.lunchBreakMinutes));
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/admin/employees`);
+      if (response.ok) {
+        const data = await response.json();
+        
+        const cleanCurrentName = currentUser.name?.toLowerCase().trim();
+        const cleanCurrentId = currentUser.employeeId?.toLowerCase().trim();
+
+        const currentProfile = data.find((e: any) => {
+          const eName = e.name?.toLowerCase().trim();
+          const eId = e.employeeId?.toLowerCase().trim();
+          return (cleanCurrentName && eName === cleanCurrentName) || (cleanCurrentId && eId === cleanCurrentId);
+        });
+
+        if (currentProfile && currentProfile.lunchBreakMinutes !== undefined) {
+          setEmployeeLunchMins(Number(currentProfile.lunchBreakMinutes));
+        }
+      }
+    } catch (e) {
+      console.error('Error fetching employee lunch profile:', e);
     }
   };
 
@@ -84,10 +130,10 @@ export default function HistoryScreen() {
   };
 
   useEffect(() => {
+    fetchEmployeeLunchProfile();
     fetchPermanentCloudHistory();
   }, [currentUser]);
 
-  // 🗓️ CALENDAR HELPER FUNCTIONS
   const year = calendarViewDate.getFullYear();
   const month = calendarViewDate.getMonth();
 
@@ -109,13 +155,11 @@ export default function HistoryScreen() {
 
   const handleSelectDay = (day: number) => {
     const selectedObj = new Date(year, month, day);
-    // Formats date into "Month DD, YYYY" (e.g. "August 6, 2026")
     const formatted = selectedObj.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
     setSelectedDate(formatted);
     setIsCalendarVisible(false);
   };
 
-  // 🔍 EXACT MATCH ON DATE STRING
   const filteredLogs = cloudLogs.filter((item) => {
     if (!selectedDate) return true;
     if (!item.date) return false;
@@ -155,13 +199,12 @@ export default function HistoryScreen() {
           <Ionicons name="time-outline" size={18} color="#1A202C" />
           <Text style={styles.sectionTitle}>Attendance Logs Timeline</Text>
         </View>
-        <TouchableOpacity style={styles.refreshIconBtn} onPress={fetchPermanentCloudHistory}>
+        <TouchableOpacity style={styles.refreshIconBtn} onPress={() => { fetchEmployeeLunchProfile(); fetchPermanentCloudHistory(); }}>
           <Ionicons name="refresh-outline" size={13} color="#2B6CB0" style={{ marginRight: 4 }} />
           <Text style={styles.refreshIconText}>Refresh</Text>
         </TouchableOpacity>
       </View>
 
-      {/* 📅 CALENDAR FILTER SELECTOR BAR */}
       <View style={styles.calendarFilterBarContainer}>
         <TouchableOpacity 
           style={styles.calendarPickerBtn}
@@ -234,7 +277,7 @@ export default function HistoryScreen() {
                     <View style={[styles.punchItem, { backgroundColor: '#F0FDF4', borderColor: '#DCFCE7' }, isAbsent && { backgroundColor: '#FFF5F5', borderColor: '#FED7D7' }]}>
                       <Text style={[styles.punchLabel, { color: '#16A34A' }, isAbsent && { color: '#E53E3E' }]}>DURATION</Text>
                       <Text style={[styles.punchTime, { color: '#15803D' }, isAbsent && { color: '#E53E3E' }]}>
-                        {calculateWorkingHours(item.loginTime, item.logoutTime)}
+                        {calculateWorkingHours(item.loginTime, item.logoutTime, employeeLunchMins)}
                       </Text>
                     </View>
 
@@ -263,7 +306,6 @@ export default function HistoryScreen() {
                     <Text style={styles.drawerLabelTitle}>Biometric Verification Snapshots:</Text>
                     <View style={styles.photoGridRow}>
                       
-                      {/* 📥 PUNCH IN THUMBNAIL */}
                       <View style={styles.photoBlock}>
                         <Text style={styles.photoGridLabel}>📥 Punch In Capture:</Text>
                         {hasInPhoto ? (
@@ -289,7 +331,6 @@ export default function HistoryScreen() {
                         )}
                       </View>
 
-                      {/* 📤 PUNCH OUT THUMBNAIL */}
                       <View style={styles.photoBlock}>
                         <Text style={styles.photoGridLabel}>📤 Punch Out Capture:</Text>
                         {hasOutPhoto ? (
@@ -334,7 +375,6 @@ export default function HistoryScreen() {
         <View style={styles.modalBackdrop}>
           <View style={styles.calendarModalCard}>
             
-            {/* CALENDAR HEADER */}
             <View style={styles.calendarHeaderRow}>
               <TouchableOpacity onPress={handlePrevMonth} style={styles.calNavBtn}>
                 <Ionicons name="chevron-back" size={20} color="#2D3748" />
@@ -349,14 +389,12 @@ export default function HistoryScreen() {
               </TouchableOpacity>
             </View>
 
-            {/* DAYS OF WEEK HEADERS */}
             <View style={styles.weekDaysRow}>
               {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d, index) => (
                 <Text key={index} style={styles.weekDayText}>{d}</Text>
               ))}
             </View>
 
-            {/* DAYS GRID */}
             <View style={styles.daysGrid}>
               {Array.from({ length: firstDayIndex }).map((_, idx) => (
                 <View key={`empty-${idx}`} style={styles.dayCell} />
@@ -382,7 +420,6 @@ export default function HistoryScreen() {
               })}
             </View>
 
-            {/* MODAL ACTION BUTTONS */}
             <View style={styles.calModalFooterRow}>
               {selectedDate && (
                 <TouchableOpacity 
