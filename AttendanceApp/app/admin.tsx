@@ -39,17 +39,23 @@ export default function AdminScreen() {
   const [attendanceLogs, setAttendanceLogs] = useState<AttendanceRecord[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
+  // 🔍 SEARCH QUERY STATES
+  const [empSearchQuery, setEmpSearchQuery] = useState<string>('');
+  const [logSearchQuery, setLogSearchQuery] = useState<string>('');
+
   const [empName, setEmpName] = useState('');
   const [empIdCode, setEmpIdCode] = useState('');
   const [empDesignation, setEmpDesignation] = useState('');
   const [empEmail, setEmpEmail] = useState('');
   const [empPassword, setEmpPassword] = useState('');
+  const [showEmpPassword, setShowEmpPassword] = useState<boolean>(false);
 
   const [adminName, setAdminName] = useState('');
   const [adminIdCode, setAdminIdCode] = useState('');
   const [adminDesignation, setAdminDesignation] = useState('');
   const [adminEmail, setAdminEmail] = useState('');
   const [adminPassword, setAdminPassword] = useState('');
+  const [showAdminPassword, setShowAdminPassword] = useState<boolean>(false);
 
   const availableMonths = [
     'January', 'February', 'March', 'April', 'May', 'June', 
@@ -125,6 +131,59 @@ export default function AdminScreen() {
   };
 
   const filteredLogs = getFilteredLogs();
+
+  // 🔍 FILTERED EMPLOYEES BY SEARCH QUERY
+  const searchedEmployees = employees.filter((emp) => {
+    if (!empSearchQuery.trim()) return true;
+    const q = empSearchQuery.toLowerCase().trim();
+    return (
+      emp.name?.toLowerCase().includes(q) ||
+      emp.employeeId?.toLowerCase().includes(q) ||
+      emp.designation?.toLowerCase().includes(q) ||
+      emp.email?.toLowerCase().includes(q)
+    );
+  });
+
+  // 🔍 FILTER WORKFORCE PILLS LIST BASED ON LOG SEARCH QUERY
+  const filteredWorkforceEmployees = employees.filter(e => {
+    const r: string[] = Array.isArray(e.role) ? e.role : [e.role || 'EMPLOYEE'];
+    if (r.includes('ADMIN_VIEW')) return false;
+
+    if (!logSearchQuery.trim()) return true;
+    const q = logSearchQuery.toLowerCase().trim();
+    return (
+      e.name?.toLowerCase().includes(q) ||
+      e.employeeId?.toLowerCase().includes(q)
+    );
+  });
+
+  // 🔍 FILTERED LOGS BY SEARCH QUERY
+  const searchedLogs = filteredLogs.filter((log) => {
+    if (!logSearchQuery.trim()) return true;
+    const q = logSearchQuery.toLowerCase().trim();
+    return (
+      log.employeeName?.toLowerCase().includes(q) ||
+      log.employeeIdReference?.toLowerCase().includes(q) ||
+      log.date?.toLowerCase().includes(q) ||
+      log.loginTime?.toLowerCase().includes(q) ||
+      log.logoutTime?.toLowerCase().includes(q)
+    );
+  });
+
+  // 🔄 AUTO-UPDATE SELECTED WORKFORCE FILTER WHEN USER TYPES A MATCHING NAME
+  const handleLogSearchChange = (text: string) => {
+    setLogSearchQuery(text);
+    if (!text.trim()) {
+      setSelectedEmpFilter('ALL');
+      return;
+    }
+    const matchingEmp = employees.find(
+      (e) => e.name.toLowerCase().trim() === text.toLowerCase().trim()
+    );
+    if (matchingEmp) {
+      setSelectedEmpFilter(matchingEmp.name);
+    }
+  };
 
   const handleCreateEmployeeSubmit = async () => {
     if (!empName || !empIdCode || !empDesignation || !empEmail || !empPassword) {
@@ -202,7 +261,6 @@ export default function AdminScreen() {
     setIsEditing(true);
     setEditingTargetId(item._id);
 
-    // 👑 FIXED TS(2345): Explicitly fallback to string array parsing safely
     const roles: string[] = Array.isArray(item.role) ? item.role : [item.role || 'EMPLOYEE'];
 
     if (roles.includes('ADMIN_VIEW')) {
@@ -250,7 +308,9 @@ export default function AdminScreen() {
     setIsEditing(false);
     setEditingTargetId(null);
     setEmpName(''); setEmpIdCode(''); setEmpDesignation(''); setEmpEmail(''); setEmpPassword('');
+    setShowEmpPassword(false);
     setAdminName(''); setAdminIdCode(''); setAdminDesignation(''); setAdminEmail(''); setAdminPassword('');
+    setShowAdminPassword(false);
   };
 
   const handleDownloadReport = () => {
@@ -289,7 +349,6 @@ export default function AdminScreen() {
         <View style={[styles.statBoxSummary, { borderLeftColor: '#805AD5' }]}>
           <Text style={styles.statBoxNumber}>
             {employees.filter(e => {
-              // 👑 FIXED TS(7022)/TS(2448): Removed recursive variable self-assignment loop
               const r: string[] = Array.isArray(e.role) ? e.role : [e.role || 'EMPLOYEE'];
               return r.includes('ADMIN_VIEW');
             }).length}
@@ -341,7 +400,27 @@ export default function AdminScreen() {
               <TextInput style={styles.input} value={empEmail} onChangeText={setEmpEmail} placeholder="worker@medini.com" placeholderTextColor="#A0AEC0" keyboardType="email-address" autoCapitalize="none" />
 
               <Text style={styles.inputLabel}>Access Password</Text>
-              <TextInput style={styles.input} value={empPassword} onChangeText={setEmpPassword} placeholder="••••••••" placeholderTextColor="#A0AEC0" secureTextEntry autoCapitalize="none" />
+              <View style={styles.passwordInputContainer}>
+                <TextInput
+                  style={styles.passwordInput}
+                  value={empPassword}
+                  onChangeText={setEmpPassword}
+                  placeholder="••••••••"
+                  placeholderTextColor="#A0AEC0"
+                  secureTextEntry={!showEmpPassword}
+                  autoCapitalize="none"
+                />
+                <TouchableOpacity
+                  style={styles.eyeIconBtn}
+                  onPress={() => setShowEmpPassword(!showEmpPassword)}
+                >
+                  <Ionicons
+                    name={showEmpPassword ? 'eye-off-outline' : 'eye-outline'}
+                    size={20}
+                    color="#718096"
+                  />
+                </TouchableOpacity>
+              </View>
 
               <View style={styles.formActionBtnGroup}>
                 <TouchableOpacity style={[styles.submitButton, { flex: 1 }]} onPress={handleCreateEmployeeSubmit}>
@@ -385,7 +464,27 @@ export default function AdminScreen() {
               <TextInput style={styles.input} value={adminEmail} onChangeText={setAdminEmail} placeholder="supervisor@medini.com" placeholderTextColor="#A0AEC0" keyboardType="email-address" autoCapitalize="none" />
 
               <Text style={styles.inputLabel}>Admin Access Password</Text>
-              <TextInput style={styles.input} value={adminPassword} onChangeText={setAdminPassword} placeholder="••••••••" placeholderTextColor="#A0AEC0" secureTextEntry autoCapitalize="none" />
+              <View style={styles.passwordInputContainer}>
+                <TextInput
+                  style={styles.passwordInput}
+                  value={adminPassword}
+                  onChangeText={setAdminPassword}
+                  placeholder="••••••••"
+                  placeholderTextColor="#A0AEC0"
+                  secureTextEntry={!showAdminPassword}
+                  autoCapitalize="none"
+                />
+                <TouchableOpacity
+                  style={styles.eyeIconBtn}
+                  onPress={() => setShowAdminPassword(!showAdminPassword)}
+                >
+                  <Ionicons
+                    name={showAdminPassword ? 'eye-off-outline' : 'eye-outline'}
+                    size={20}
+                    color="#718096"
+                  />
+                </TouchableOpacity>
+              </View>
 
               <View style={styles.formActionBtnGroup}>
                 <TouchableOpacity style={[styles.submitButton, { backgroundColor: '#805AD5', flex: 1 }]} onPress={handleCreateAdminViewSubmit}>
@@ -406,12 +505,31 @@ export default function AdminScreen() {
             <Ionicons name="folder-open-outline" size={15} color="#2B6CB0" />
             <Text style={styles.sectionHeadingLabelInline}>System Master Accounts Directory</Text>
           </View>
+
+          {/* 🔍 DIRECTORY SEARCH BAR */}
+          <View style={styles.searchBarContainer}>
+            <Ionicons name="search-outline" size={16} color="#718096" style={{ marginRight: 8 }} />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search by name, ID, designation, or email..."
+              placeholderTextColor="#A0AEC0"
+              value={empSearchQuery}
+              onChangeText={setEmpSearchQuery}
+            />
+            {empSearchQuery.length > 0 && (
+              <TouchableOpacity onPress={() => setEmpSearchQuery('')}>
+                <Ionicons name="close-circle" size={18} color="#A0AEC0" />
+              </TouchableOpacity>
+            )}
+          </View>
+
           <View style={styles.directoryCard}>
-            {employees.length === 0 ? (
-              <Text style={styles.emptyTextSub}>No active profiles connected inside database container.</Text>
+            {searchedEmployees.length === 0 ? (
+              <Text style={styles.emptyTextSub}>
+                {empSearchQuery ? `No profiles found matching "${empSearchQuery}".` : 'No active profiles connected inside database container.'}
+              </Text>
             ) : (
-              employees.map((item) => {
-                // 👑 FIXED TS(2345): Ensured typed array fallback here as well
+              searchedEmployees.map((item) => {
                 const roles: string[] = Array.isArray(item.role) ? item.role : [item.role || 'EMPLOYEE'];
                 const isAdminView = roles.includes('ADMIN_VIEW');
                 return (
@@ -445,21 +563,44 @@ export default function AdminScreen() {
 
       {activeTab === 'LOGS' && (
         <View style={{ flex: 1 }}>
-          {/* LOGS WORKSPACE BLOCK */}
+          {/* 🔍 WORKFORCE FILTERING FOCUS SECTION */}
           <View style={styles.sectionHeaderRowInline}>
             <Ionicons name="filter" size={14} color="#2B6CB0" />
             <Text style={styles.sectionHeadingLabelInline}>Workforce Filtering Focus</Text>
           </View>
+
+          {/* SEARCH BAR INSIDE WORKFORCE FILTERING FOCUS */}
+          <View style={styles.searchBarContainer}>
+            <Ionicons name="search-outline" size={16} color="#718096" style={{ marginRight: 8 }} />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search workforce by employee name or ID..."
+              placeholderTextColor="#A0AEC0"
+              value={logSearchQuery}
+              onChangeText={handleLogSearchChange}
+            />
+            {logSearchQuery.length > 0 && (
+              <TouchableOpacity onPress={() => handleLogSearchChange('')}>
+                <Ionicons name="close-circle" size={18} color="#A0AEC0" />
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {/* WORKFORCE FILTER PILLS INTACT & FILTERED BY SEARCH */}
           <View style={styles.pillScrollFrame}>
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              <TouchableOpacity style={[styles.filterPill, selectedEmpFilter === 'ALL' && styles.activeFilterPill]} onPress={() => setSelectedEmpFilter('ALL')}>
+              <TouchableOpacity 
+                style={[styles.filterPill, selectedEmpFilter === 'ALL' && styles.activeFilterPill]} 
+                onPress={() => { setSelectedEmpFilter('ALL'); setLogSearchQuery(''); }}
+              >
                 <Text style={[styles.filterPillText, selectedEmpFilter === 'ALL' && styles.activeFilterPillText]}>🌐 Global Workforce</Text>
               </TouchableOpacity>
-              {employees.filter(e => {
-                const r: string[] = Array.isArray(e.role) ? e.role : [e.role || 'EMPLOYEE'];
-                return !r.includes('ADMIN_VIEW');
-              }).map((emp) => (
-                <TouchableOpacity key={emp._id} style={[styles.filterPill, selectedEmpFilter === emp.name && styles.activeFilterPill]} onPress={() => setSelectedEmpFilter(emp.name)}>
+              {filteredWorkforceEmployees.map((emp) => (
+                <TouchableOpacity 
+                  key={emp._id} 
+                  style={[styles.filterPill, selectedEmpFilter === emp.name && styles.activeFilterPill]} 
+                  onPress={() => { setSelectedEmpFilter(emp.name); setLogSearchQuery(emp.name); }}
+                >
                   <Text style={[styles.filterPillText, selectedEmpFilter === emp.name && styles.activeFilterPillText]}>👤 {emp.name}</Text>
                 </TouchableOpacity>
               ))}
@@ -470,7 +611,7 @@ export default function AdminScreen() {
             <Ionicons name="calendar-outline" size={14} color="#2B6CB0" />
             <Text style={styles.sectionHeadingLabelInline}>Select Active Tracking Month ({new Date().getFullYear()})</Text>
           </View>
-          <View style={[styles.pillScrollFrame, { marginBottom: 15 }]}>
+          <View style={[styles.pillScrollFrame, { marginBottom: 12 }]}>
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
               {availableMonths.map((month) => (
                 <TouchableOpacity key={month} style={[styles.monthFilterPill, selectedMonthFilter === month && styles.activeMonthFilterPill]} onPress={() => setSelectedMonthFilter(month)}>
@@ -496,13 +637,15 @@ export default function AdminScreen() {
                 <ActivityIndicator size="large" color="#007AFF" />
                 <Text style={styles.loaderLabelSub}>Compiling cloud shift registers...</Text>
               </View>
-            ) : filteredLogs.length === 0 ? (
+            ) : searchedLogs.length === 0 ? (
               <View style={styles.emptyCardFrame}>
                 <MaterialCommunityIcons name="folder-alert-outline" size={24} color="#A0AEC0" style={{ marginBottom: 6 }} />
-                <Text style={styles.emptyTextMessage}>No logs recorded inside {selectedMonthFilter} {new Date().getFullYear()} for this item selection.</Text>
+                <Text style={styles.emptyTextMessage}>
+                  {logSearchQuery ? `No logs found matching "${logSearchQuery}".` : `No logs recorded inside ${selectedMonthFilter} ${new Date().getFullYear()} for this item selection.`}
+                </Text>
               </View>
             ) : (
-              filteredLogs.map((logItem) => {
+              searchedLogs.map((logItem) => {
                 const isAbsent = logItem.loginTime === 'ABSENT' || logItem.logoutTime === 'ABSENT';
                 return (
                   <View key={logItem._id} style={[styles.dataLogCard, isAbsent && styles.dataLogCardAbsent]}>
@@ -566,6 +709,15 @@ const styles = StyleSheet.create({
   sectionHeading: { fontSize: 13, fontWeight: '800', color: '#007AFF', textTransform: 'uppercase', letterSpacing: 0.5, marginLeft: 6 },
   inputLabel: { fontSize: 11, fontWeight: '700', color: '#718096', marginBottom: 5, marginTop: 10, textTransform: 'uppercase', letterSpacing: 0.3 },
   input: { backgroundColor: '#F7FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 14, color: '#2D3748', marginBottom: 4 },
+  
+  /* 🔍 SEARCH BAR STYLES */
+  searchBarContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#CBD5E0', borderRadius: 12, paddingHorizontal: 12, height: 42, marginBottom: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.02, shadowRadius: 3, elevation: 1 },
+  searchInput: { flex: 1, fontSize: 13, color: '#2D3748', fontWeight: '600' },
+
+  passwordInputContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F7FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 12, marginBottom: 4 },
+  passwordInput: { flex: 1, paddingHorizontal: 14, paddingVertical: 12, fontSize: 14, color: '#2D3748' },
+  eyeIconBtn: { paddingHorizontal: 12, paddingVertical: 10 },
+
   inlineInputsRow: { flexDirection: 'row', justifyContent: 'space-between', width: '100%' },
   formActionBtnGroup: { flexDirection: 'row', marginTop: 15, width: '100%' },
   submitButton: { backgroundColor: '#007AFF', paddingVertical: 12, borderRadius: 12, alignItems: 'center', justifyContent: 'center', flexDirection: 'row' },

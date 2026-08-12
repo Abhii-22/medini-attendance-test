@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, Text, View, ScrollView, TouchableOpacity, ActivityIndicator, Image, Modal } from 'react-native';
+import { StyleSheet, Text, View, ScrollView, TouchableOpacity, ActivityIndicator, Image, Modal, TextInput } from 'react-native';
 import { useAuth, API_BASE_URL } from './_layout';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -9,7 +9,7 @@ interface EmployeeProfile {
   employeeId: string;
   designation: string;
   email: string;
-  role?: string;
+  role?: string | string[];
 }
 
 interface AttendanceRecord {
@@ -39,12 +39,14 @@ export default function AdminViewScreen() {
   const { logout, currentUser } = useAuth();
 
   const [selectedEmpFilter, setSelectedEmpFilter] = useState<string>('ALL');
+  const [searchQuery, setSearchQuery] = useState<string>(''); // 🔍 SEARCH STATE
   
   const currentMonthName = new Date().toLocaleDateString('en-US', { month: 'long' }); 
   const [selectedMonthFilter, setSelectedMonthFilter] = useState<string>(currentMonthName);
   
   const [employees, setEmployees] = useState<EmployeeProfile[]>([]);
   const [attendanceLogs, setAttendanceLogs] = useState<AttendanceRecord[]>([]);
+  const [allAttendanceLogs, setAllAttendanceLogs] = useState<AttendanceRecord[]>([]); // 🌟 Global logs storage
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null); 
 
@@ -91,6 +93,19 @@ export default function AdminViewScreen() {
     }
   };
 
+  // 🔍 FILTERED EMPLOYEES FOR CAROUSEL (EXCLUDES ADMIN_VIEW ROLES)
+  const filteredEmployees = employees.filter((emp) => {
+    const roles = Array.isArray(emp.role) ? emp.role : [emp.role || 'EMPLOYEE'];
+    if (roles.includes('ADMIN_VIEW')) return false;
+
+    if (!searchQuery.trim()) return true;
+    const query = searchQuery.toLowerCase();
+    return (
+      emp.name.toLowerCase().includes(query) ||
+      emp.employeeId.toLowerCase().includes(query)
+    );
+  });
+
   const getFilteredLogs = () => {
     const currentYearString = new Date().getFullYear().toString();
 
@@ -99,17 +114,36 @@ export default function AdminViewScreen() {
       const logDateLower = log.date.toLowerCase();
       const matchesMonth = logDateLower.includes(selectedMonthFilter.toLowerCase());
       const matchesYear = logDateLower.includes(currentYearString);
-      return matchesMonth && matchesYear;
+      
+      // 🔎 Apply search query on log stream
+      const query = searchQuery.toLowerCase().trim();
+      const matchesSearch = query === '' || 
+        log.employeeName?.toLowerCase().includes(query) || 
+        log.employeeIdReference?.toLowerCase().includes(query);
+
+      return matchesMonth && matchesYear && matchesSearch;
     });
   };
 
   const filteredLogs = getFilteredLogs();
 
+  // 📊 CALCULATE MONTHLY METRICS FOR ALL EMPLOYEES OR INDIVIDUAL EMPLOYEE
   const getAttendanceMetrics = () => {
+    const currentYearString = new Date().getFullYear().toString();
+    
+    // Choose logs source based on selection
+    const logsToAnalyze = selectedEmpFilter === 'ALL' ? allAttendanceLogs : attendanceLogs;
+
+    const monthlyLogs = logsToAnalyze.filter((log) => {
+      if (!log.date) return false;
+      const logDateLower = log.date.toLowerCase();
+      return logDateLower.includes(selectedMonthFilter.toLowerCase()) && logDateLower.includes(currentYearString);
+    });
+
     let presentCount = 0;
     let absentCount = 0;
 
-    filteredLogs.forEach((log) => {
+    monthlyLogs.forEach((log) => {
       if (log.loginTime === 'ABSENT' || log.logoutTime === 'ABSENT') {
         absentCount++;
       } else if (log.loginTime !== '--:--') {
@@ -134,6 +168,19 @@ export default function AdminViewScreen() {
     }
   };
 
+  // 🌐 FETCH ALL LOGS ONCE FOR GLOBAL METRICS
+  const fetchGlobalAttendanceLogs = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/admin/attendance-sheet?employeeName=ALL`);
+      if (response.ok) {
+        const data = await response.json();
+        setAllAttendanceLogs(data);
+      }
+    } catch (error) {
+      console.error('Error fetching global logs:', error);
+    }
+  };
+
   const fetchAttendanceLogs = async (filterName: string) => {
     try {
       setIsLoading(true);
@@ -141,6 +188,9 @@ export default function AdminViewScreen() {
       if (response.ok) {
         const data = await response.json();
         setAttendanceLogs(data);
+        if (filterName === 'ALL') {
+          setAllAttendanceLogs(data);
+        }
       }
     } catch (error) {
       console.error('Error fetching logs stream:', error);
@@ -151,6 +201,7 @@ export default function AdminViewScreen() {
 
   useEffect(() => {
     fetchEmployeesList();
+    fetchGlobalAttendanceLogs();
   }, []);
 
   useEffect(() => {
@@ -204,14 +255,20 @@ export default function AdminViewScreen() {
       {/* METRICS OVERVIEW CARDS */}
       <Text style={styles.sectionHeadingLabel}>
         {selectedEmpFilter === 'ALL' 
-          ? `🌐 Global Analytics (${selectedMonthFilter} ${new Date().getFullYear()})` 
+          ? `🌐 All Employees Analytics (${selectedMonthFilter} ${new Date().getFullYear()})` 
           : `👤 ${selectedEmpFilter} Summary (${selectedMonthFilter} ${new Date().getFullYear()})`
         }
       </Text>
       <View style={styles.summaryGridContainer}>
         <View style={[styles.statBoxSummary, { borderLeftColor: '#007AFF' }]}>
           <Text style={styles.statBoxNumber}>
-            {selectedEmpFilter === 'ALL' ? employees.filter(e => e.role !== 'ADMIN_VIEW').length : '1'}
+            {selectedEmpFilter === 'ALL' 
+              ? employees.filter(e => {
+                  const r = Array.isArray(e.role) ? e.role : [e.role || 'EMPLOYEE'];
+                  return !r.includes('ADMIN_VIEW');
+                }).length 
+              : '1'
+            }
           </Text>
           <Text style={styles.statBoxLabel}>
             {selectedEmpFilter === 'ALL' ? 'Staff Members' : 'Active Profile'}
@@ -220,25 +277,55 @@ export default function AdminViewScreen() {
         
         <View style={[styles.statBoxSummary, { borderLeftColor: '#38A169' }]}>
           <Text style={[styles.statBoxNumber, { color: '#2F855A' }]}>{presentCount}</Text>
-          <Text style={styles.statBoxLabel}>Days Present</Text>
+          <Text style={styles.statBoxLabel}>
+            {selectedEmpFilter === 'ALL' ? 'Employees Total Days Present' : 'Days Present'}
+          </Text>
         </View>
 
         <View style={[styles.statBoxSummary, { borderLeftColor: '#E53E3E' }]}>
           <Text style={[styles.statBoxNumber, { color: '#C53030' }]}>{absentCount}</Text>
-          <Text style={styles.statBoxLabel}>Days Absent</Text>
+          <Text style={styles.statBoxLabel}>
+            {selectedEmpFilter === 'ALL' ? 'Employees Total Days Absent' : 'Days Absent'}
+          </Text>
         </View>
+      </View>
+
+      {/* 🔍 SEARCH BAR INPUT */}
+      <View style={styles.searchBarContainer}>
+        <Ionicons name="search" size={18} color="#718096" style={{ marginRight: 8 }} />
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search employee by name or ID..."
+          placeholderTextColor="#A0AEC0"
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+        />
+        {searchQuery.length > 0 && (
+          <TouchableOpacity onPress={() => setSearchQuery('')}>
+            <Ionicons name="close-circle" size={18} color="#A0AEC0" />
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* FILTER CAROUSEL */}
       <Text style={styles.sectionHeadingLabel}>Workforce Filter Focal Point</Text>
       <View style={styles.pillScrollFrame}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <TouchableOpacity style={[styles.filterPill, selectedEmpFilter === 'ALL' && styles.activeFilterPill]} onPress={() => setSelectedEmpFilter('ALL')}>
+          <TouchableOpacity 
+            style={[styles.filterPill, selectedEmpFilter === 'ALL' && styles.activeFilterPill]} 
+            onPress={() => setSelectedEmpFilter('ALL')}
+          >
             <Text style={[styles.filterPillText, selectedEmpFilter === 'ALL' && styles.activeFilterPillText]}>🌐 Global Workforce</Text>
           </TouchableOpacity>
-          {employees.filter(e => e.role !== 'ADMIN_VIEW').map((emp) => (
-            <TouchableOpacity key={emp._id} style={[styles.filterPill, selectedEmpFilter === emp.name && styles.activeFilterPill]} onPress={() => setSelectedEmpFilter(emp.name)}>
-              <Text style={[styles.filterPillText, selectedEmpFilter === emp.name && styles.activeFilterPillText]}>👤 {emp.name}</Text>
+          {filteredEmployees.map((emp) => (
+            <TouchableOpacity 
+              key={emp._id} 
+              style={[styles.filterPill, selectedEmpFilter === emp.name && styles.activeFilterPill]} 
+              onPress={() => setSelectedEmpFilter(emp.name)}
+            >
+              <Text style={[styles.filterPillText, selectedEmpFilter === emp.name && styles.activeFilterPillText]}>
+                👤 {emp.name}
+              </Text>
             </TouchableOpacity>
           ))}
         </ScrollView>
@@ -272,7 +359,9 @@ export default function AdminViewScreen() {
         </View>
       ) : filteredLogs.length === 0 ? (
         <View style={styles.emptyCardFrame}>
-          <Text style={styles.emptyTextMessage}>No log items recorded inside {selectedMonthFilter} {new Date().getFullYear()}.</Text>
+          <Text style={styles.emptyTextMessage}>
+            {searchQuery ? `No matching logs found for "${searchQuery}".` : `No log items recorded inside ${selectedMonthFilter} ${new Date().getFullYear()}.`}
+          </Text>
         </View>
       ) : (
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
@@ -459,6 +548,11 @@ const styles = StyleSheet.create({
   statBoxSummary: { width: '31.5%', borderRadius: 16, padding: 12, borderWidth: 1, backgroundColor: '#FFFFFF', borderColor: '#E2E8F0', borderLeftWidth: 4 },
   statBoxNumber: { fontSize: 19, fontWeight: '800', color: '#1A202C' },
   statBoxLabel: { fontSize: 9, fontWeight: '700', color: '#718096', marginTop: 3 },
+  
+  /* 🔍 SEARCH BAR STYLES */
+  searchBarContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', borderRadius: 14, paddingHorizontal: 12, height: 42, borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 10 },
+  searchInput: { flex: 1, fontSize: 13, color: '#1A202C', fontWeight: '600' },
+
   pillScrollFrame: { maxHeight: 44, marginBottom: 12 },
   filterPill: { backgroundColor: '#E2E8F0', paddingHorizontal: 14, justifyContent: 'center', alignItems: 'center', borderRadius: 14, marginRight: 6, height: 36, borderWidth: 1, borderColor: '#CBD5E0' },
   activeFilterPill: { backgroundColor: '#007AFF', borderColor: '#007AFF' },

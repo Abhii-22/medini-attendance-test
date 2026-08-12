@@ -30,6 +30,11 @@ export default function HistoryScreen() {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
 
+  // 📅 CALENDAR FILTER STATES
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [isCalendarVisible, setIsCalendarVisible] = useState<boolean>(false);
+  const [calendarViewDate, setCalendarViewDate] = useState<Date>(new Date());
+
   const [modalState, setModalState] = useState<PhotoModalState>({
     visible: false,
     imageUri: null,
@@ -82,6 +87,42 @@ export default function HistoryScreen() {
     fetchPermanentCloudHistory();
   }, [currentUser]);
 
+  // 🗓️ CALENDAR HELPER FUNCTIONS
+  const year = calendarViewDate.getFullYear();
+  const month = calendarViewDate.getMonth();
+
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const firstDayIndex = new Date(year, month, 1).getDay();
+
+  const monthNames = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+  ];
+
+  const handlePrevMonth = () => {
+    setCalendarViewDate(new Date(year, month - 1, 1));
+  };
+
+  const handleNextMonth = () => {
+    setCalendarViewDate(new Date(year, month + 1, 1));
+  };
+
+  const handleSelectDay = (day: number) => {
+    const selectedObj = new Date(year, month, day);
+    // Formats date into "Month DD, YYYY" (e.g. "August 6, 2026")
+    const formatted = selectedObj.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+    setSelectedDate(formatted);
+    setIsCalendarVisible(false);
+  };
+
+  // 🔍 EXACT MATCH ON DATE STRING
+  const filteredLogs = cloudLogs.filter((item) => {
+    if (!selectedDate) return true;
+    if (!item.date) return false;
+
+    return item.date.trim().toLowerCase().includes(selectedDate.trim().toLowerCase());
+  });
+
   const handleToggleDrawer = (id: string) => {
     setExpandedLogId(expandedLogId === id ? null : id);
   };
@@ -96,7 +137,7 @@ export default function HistoryScreen() {
     setModalState({
       visible: true,
       imageUri,
-      location: location || '', // 🚀 Raw address string directly from backend
+      location: location || '',
       type,
       date,
       time
@@ -120,21 +161,46 @@ export default function HistoryScreen() {
         </TouchableOpacity>
       </View>
 
+      {/* 📅 CALENDAR FILTER SELECTOR BAR */}
+      <View style={styles.calendarFilterBarContainer}>
+        <TouchableOpacity 
+          style={styles.calendarPickerBtn}
+          activeOpacity={0.8}
+          onPress={() => setIsCalendarVisible(true)}
+        >
+          <Ionicons name="calendar-sharp" size={18} color="#007AFF" style={{ marginRight: 8 }} />
+          <Text style={[styles.calendarPickerBtnText, selectedDate && styles.calendarPickerSelectedText]}>
+            {selectedDate ? `Date: ${selectedDate}` : 'Select Date from Calendar'}
+          </Text>
+        </TouchableOpacity>
+
+        {selectedDate && (
+          <TouchableOpacity 
+            style={styles.clearDateFilterBtn} 
+            onPress={() => setSelectedDate(null)}
+          >
+            <Ionicons name="close-circle" size={20} color="#E53E3E" />
+          </TouchableOpacity>
+        )}
+      </View>
+
       {isLoading ? (
         <View style={styles.emptyContainer}>
           <ActivityIndicator size="small" color="#007AFF" />
           <Text style={[styles.emptyText, { marginTop: 10 }]}>Syncing with cloud database...</Text>
         </View>
-      ) : cloudLogs.length === 0 ? (
+      ) : filteredLogs.length === 0 ? (
         <View style={styles.emptyContainer}>
           <View style={styles.emptyIconCircle}>
             <Ionicons name="calendar-outline" size={24} color="#718096" />
           </View>
-          <Text style={styles.emptyText}>No active history logs available.</Text>
+          <Text style={styles.emptyText}>
+            {selectedDate ? `No attendance logs recorded for ${selectedDate}.` : 'No active history logs available.'}
+          </Text>
         </View>
       ) : (
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 30 }}>
-          {cloudLogs.map((item) => {
+          {filteredLogs.map((item) => {
             const isExpanded = expandedLogId === item._id;
             const hasInPhoto = !!item.capturedPhotoInUri;
             const hasOutPhoto = !!item.capturedPhotoOutUri;
@@ -258,7 +324,88 @@ export default function HistoryScreen() {
         </ScrollView>
       )}
 
-      {/* POPUP MODAL */}
+      {/* 🗓️ INTERACTIVE CALENDAR MODAL */}
+      <Modal
+        visible={isCalendarVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setIsCalendarVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.calendarModalCard}>
+            
+            {/* CALENDAR HEADER */}
+            <View style={styles.calendarHeaderRow}>
+              <TouchableOpacity onPress={handlePrevMonth} style={styles.calNavBtn}>
+                <Ionicons name="chevron-back" size={20} color="#2D3748" />
+              </TouchableOpacity>
+              
+              <Text style={styles.calMonthTitle}>
+                {monthNames[month]} {year}
+              </Text>
+              
+              <TouchableOpacity onPress={handleNextMonth} style={styles.calNavBtn}>
+                <Ionicons name="chevron-forward" size={20} color="#2D3748" />
+              </TouchableOpacity>
+            </View>
+
+            {/* DAYS OF WEEK HEADERS */}
+            <View style={styles.weekDaysRow}>
+              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d, index) => (
+                <Text key={index} style={styles.weekDayText}>{d}</Text>
+              ))}
+            </View>
+
+            {/* DAYS GRID */}
+            <View style={styles.daysGrid}>
+              {Array.from({ length: firstDayIndex }).map((_, idx) => (
+                <View key={`empty-${idx}`} style={styles.dayCell} />
+              ))}
+
+              {Array.from({ length: daysInMonth }).map((_, idx) => {
+                const dayNum = idx + 1;
+                const cellObj = new Date(year, month, dayNum);
+                const cellFormatted = cellObj.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+                const isSelected = selectedDate === cellFormatted;
+
+                return (
+                  <TouchableOpacity
+                    key={dayNum}
+                    style={[styles.dayCell, isSelected && styles.selectedDayCell]}
+                    onPress={() => handleSelectDay(dayNum)}
+                  >
+                    <Text style={[styles.dayCellText, isSelected && styles.selectedDayCellText]}>
+                      {dayNum}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* MODAL ACTION BUTTONS */}
+            <View style={styles.calModalFooterRow}>
+              {selectedDate && (
+                <TouchableOpacity 
+                  style={styles.calResetBtn} 
+                  onPress={() => { setSelectedDate(null); setIsCalendarVisible(false); }}
+                >
+                  <Text style={styles.calResetBtnText}>Show All Logs</Text>
+                </TouchableOpacity>
+              )}
+              
+              <TouchableOpacity 
+                style={styles.calCloseBtn} 
+                onPress={() => setIsCalendarVisible(false)}
+              >
+                <Text style={styles.calCloseBtnText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+
+          </View>
+        </View>
+      </Modal>
+
+      {/* POPUP PHOTO MODAL */}
       <Modal
         visible={modalState.visible}
         transparent={true}
@@ -281,7 +428,6 @@ export default function HistoryScreen() {
                     <Text style={styles.geotagStampTitle}>GPS MAP CAMERA</Text>
                   </View>
                   
-                  {/* EXACT LOCATION TEXT CAPTURED */}
                   <Text style={styles.geotagStampAddress}>
                     {modalState.location}
                   </Text>
@@ -304,11 +450,34 @@ export default function HistoryScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8FAFC', paddingHorizontal: 16, paddingTop: 20 },
-  headerTitleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  headerTitleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   sectionTitle: { fontSize: 14, fontWeight: '800', color: '#1A202C', marginLeft: 6, textTransform: 'uppercase', letterSpacing: 0.3 },
   refreshIconBtn: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E2E8F0', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 10, flexDirection: 'row', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.01, shadowRadius: 2, elevation: 1 },
   refreshIconText: { color: '#4A5568', fontSize: 11, fontWeight: '700' },
   
+  calendarFilterBarContainer: { flexDirection: 'row', alignItems: 'center', marginBottom: 14 },
+  calendarPickerBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', borderRadius: 14, paddingHorizontal: 14, height: 44, borderWidth: 1, borderColor: '#CBD5E0', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.02, shadowRadius: 3, elevation: 1 },
+  calendarPickerBtnText: { fontSize: 13, color: '#718096', fontWeight: '600' },
+  calendarPickerSelectedText: { color: '#007AFF', fontWeight: '800' },
+  clearDateFilterBtn: { marginLeft: 8, padding: 4 },
+
+  calendarModalCard: { width: '100%', maxWidth: 350, backgroundColor: '#FFFFFF', borderRadius: 24, padding: 18, borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.25, shadowRadius: 15, elevation: 10 },
+  calendarHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  calNavBtn: { padding: 6, backgroundColor: '#EDF2F7', borderRadius: 10 },
+  calMonthTitle: { fontSize: 15, fontWeight: '800', color: '#1A202C' },
+  weekDaysRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
+  weekDayText: { width: '14.28%', textAlign: 'center', fontSize: 11, fontWeight: '800', color: '#A0AEC0' },
+  daysGrid: { flexDirection: 'row', flexWrap: 'wrap', width: '100%' },
+  dayCell: { width: '14.28%', height: 40, justifyContent: 'center', alignItems: 'center', marginVertical: 2, borderRadius: 10 },
+  dayCellText: { fontSize: 13, fontWeight: '700', color: '#2D3748' },
+  selectedDayCell: { backgroundColor: '#007AFF' },
+  selectedDayCellText: { color: '#FFFFFF', fontWeight: '900' },
+  calModalFooterRow: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: 16, borderTopWidth: 1, borderTopColor: '#EDF2F7', paddingTop: 12 },
+  calResetBtn: { backgroundColor: '#FFF5F5', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10, marginRight: 8, borderWidth: 1, borderColor: '#FED7D7' },
+  calResetBtnText: { color: '#E53E3E', fontSize: 12, fontWeight: '700' },
+  calCloseBtn: { backgroundColor: '#EDF2F7', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 10 },
+  calCloseBtnText: { color: '#4A5568', fontSize: 12, fontWeight: '700' },
+
   dayGroupCardWrapper: { marginBottom: 10 },
   dayGroupCard: { backgroundColor: '#FFFFFF', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.01, shadowRadius: 4, elevation: 1 },
   dayGroupCardExpanded: { borderBottomLeftRadius: 0, borderBottomRightRadius: 0, borderBottomWidth: 0, borderColor: '#CBD5E0', shadowOpacity: 0, elevation: 0 },
