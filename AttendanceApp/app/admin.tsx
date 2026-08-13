@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert, Linking, ActivityIndicator, Modal } from 'react-native';
 import { useAuth, API_BASE_URL } from './_layout';
-import { Ionicons, FontAwesome5, MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 
 interface EmployeeProfile {
   _id: string;
@@ -50,7 +50,7 @@ export default function AdminScreen() {
   const [empEmail, setEmpEmail] = useState('');
   const [empPassword, setEmpPassword] = useState('');
   
-  // 🍱 DROPDOWN LUNCH TIMING SELECTION STATES (DEFAULTED STRICTLY TO 0)
+  // 🍱 DROPDOWN LUNCH TIMING SELECTION STATES
   const [selectedLunchHours, setSelectedLunchHours] = useState<number>(0);
   const [selectedLunchMins, setSelectedLunchMins] = useState<number>(0);
   const [showHoursDropdown, setShowHoursDropdown] = useState<boolean>(false);
@@ -73,7 +73,7 @@ export default function AdminScreen() {
   const hoursList = Array.from({ length: 13 }, (_, i) => i);
   const minutesList = Array.from({ length: 60 }, (_, i) => i);
 
-  // ⏱️ ACCURATE WORKING HOURS CALCULATOR WITH LUNCH DEDUCTION MATCHING BY ID & NAME
+  // ⏱️ WORKING HOURS CALCULATOR WITH LUNCH DEDUCTION MATCHING
   const calculateWorkingHours = (inTime: string, outTime: string, employeeNameTarget?: string, employeeIdTarget?: string) => {
     if (!inTime || !outTime || inTime === '--:--' || outTime === '--:--' || inTime === 'ABSENT' || outTime === 'ABSENT') {
       return '--';
@@ -102,7 +102,6 @@ export default function AdminScreen() {
       const grossMinutes = outMins - inMins;
       if (grossMinutes <= 0) return '0h 0m';
 
-      // Find exact lunch break duration for employee by ID or Name
       const matchedEmp = employees.find(e => 
         (employeeIdTarget && e.employeeId?.toLowerCase().trim() === employeeIdTarget?.toLowerCase().trim()) ||
         (employeeNameTarget && e.name?.toLowerCase().trim() === employeeNameTarget?.toLowerCase().trim())

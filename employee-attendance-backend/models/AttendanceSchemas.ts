@@ -36,7 +36,7 @@ export interface IAdminCredential extends Document {
 }
 
 // ----------------------------------------------------
-// 1. CORE EMPLOYEE REGISTRY SCHEMA WITH MULTI-ROLE ARRAY SUPPORT
+// 1. CORE EMPLOYEE REGISTRY SCHEMA
 // ----------------------------------------------------
 const EmployeeProfileSchema = new Schema<IEmployeeProfile>({
   name: { type: String, required: true },
@@ -45,7 +45,7 @@ const EmployeeProfileSchema = new Schema<IEmployeeProfile>({
   email: { type: String, required: true, unique: true, lowercase: true, trim: true },
   password: { type: String, required: true },
   role: { type: [String], default: ['EMPLOYEE'] },
-  lunchBreakMinutes: { type: Number, default: 0 } // 🍱 MONGOOSE STRICT SCHEMA ALLOWS SAVING LUNCH DURATION
+  lunchBreakMinutes: { type: Number, default: 0 } // 🍱 MONGOOSE SCHEMA PROPERTY FOR LUNCH DURATION
 }, { timestamps: true });
 
 // ----------------------------------------------------
@@ -65,7 +65,7 @@ const ShiftLogSchema = new Schema<IAttendanceShiftLog>({
 }, { timestamps: true });
 
 // ----------------------------------------------------
-// 3. SEPARATE INDEPENDENT MASTER ADMIN CREDENTIAL SCHEMA
+// 3. MASTER ADMIN CREDENTIAL SCHEMA
 // ----------------------------------------------------
 const AdminCredentialSchema = new Schema<IAdminCredential>({
   name: { type: String, required: true },
