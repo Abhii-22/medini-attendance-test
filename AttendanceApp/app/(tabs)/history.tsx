@@ -46,7 +46,6 @@ export default function HistoryScreen() {
     time: ''
   });
 
-  // ⏱️ ACCURATE WORKING HOURS CALCULATOR WITH LUNCH DEDUCTION
   const calculateWorkingHours = (inTime: string, outTime: string, lunchBreakMinutes: number = 0) => {
     if (!inTime || !outTime || inTime === '--:--' || outTime === '--:--' || inTime === 'ABSENT' || outTime === 'ABSENT') {
       return '--';
@@ -275,7 +274,6 @@ export default function HistoryScreen() {
                     <View style={[styles.punchItem, { backgroundColor: '#F0FDF4', borderColor: '#DCFCE7' }, isAbsent && { backgroundColor: '#FFF5F5', borderColor: '#FED7D7' }]}>
                       <Text style={[styles.punchLabel, { color: '#16A34A' }, isAbsent && { color: '#E53E3E' }]}>DURATION</Text>
                       <Text style={[styles.punchTime, { color: '#15803D' }, isAbsent && { color: '#E53E3E' }]}>
-                        {/* 🍱 PASSING employeeLunchMins EXPLICITLY HERE */}
                         {calculateWorkingHours(item.loginTime, item.logoutTime, employeeLunchMins)}
                       </Text>
                     </View>
@@ -364,7 +362,6 @@ export default function HistoryScreen() {
         </ScrollView>
       )}
 
-      {/* 🗓️ INTERACTIVE CALENDAR MODAL */}
       <Modal
         visible={isCalendarVisible}
         transparent={true}
@@ -441,7 +438,6 @@ export default function HistoryScreen() {
         </View>
       </Modal>
 
-      {/* POPUP PHOTO MODAL */}
       <Modal
         visible={modalState.visible}
         transparent={true}
@@ -490,13 +486,11 @@ const styles = StyleSheet.create({
   sectionTitle: { fontSize: 14, fontWeight: '800', color: '#1A202C', marginLeft: 6, textTransform: 'uppercase', letterSpacing: 0.3 },
   refreshIconBtn: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E2E8F0', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 10, flexDirection: 'row', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.01, shadowRadius: 2, elevation: 1 },
   refreshIconText: { color: '#4A5568', fontSize: 11, fontWeight: '700' },
-  
   calendarFilterBarContainer: { flexDirection: 'row', alignItems: 'center', marginBottom: 14 },
   calendarPickerBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', borderRadius: 14, paddingHorizontal: 14, height: 44, borderWidth: 1, borderColor: '#CBD5E0', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.02, shadowRadius: 3, elevation: 1 },
   calendarPickerBtnText: { fontSize: 13, color: '#718096', fontWeight: '600' },
   calendarPickerSelectedText: { color: '#007AFF', fontWeight: '800' },
   clearDateFilterBtn: { marginLeft: 8, padding: 4 },
-
   calendarModalCard: { width: '100%', maxWidth: 350, backgroundColor: '#FFFFFF', borderRadius: 24, padding: 18, borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.25, shadowRadius: 15, elevation: 10 },
   calendarHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
   calNavBtn: { padding: 6, backgroundColor: '#EDF2F7', borderRadius: 10 },
@@ -513,64 +507,45 @@ const styles = StyleSheet.create({
   calResetBtnText: { color: '#E53E3E', fontSize: 12, fontWeight: '700' },
   calCloseBtn: { backgroundColor: '#EDF2F7', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 10 },
   calCloseBtnText: { color: '#4A5568', fontSize: 12, fontWeight: '700' },
-
   dayGroupCardWrapper: { marginBottom: 10 },
   dayGroupCard: { backgroundColor: '#FFFFFF', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.01, shadowRadius: 4, elevation: 1 },
   dayGroupCardExpanded: { borderBottomLeftRadius: 0, borderBottomRightRadius: 0, borderBottomWidth: 0, borderColor: '#CBD5E0', shadowOpacity: 0, elevation: 0 },
   dayGroupCardAbsent: { backgroundColor: '#FFF5F5', borderColor: '#FED7D7' },
-  
   dayHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', borderBottomWidth: 1, borderBottomColor: '#EDF2F7', paddingBottom: 10, marginBottom: 12 },
   dayText: { fontSize: 14, fontWeight: '800', color: '#007AFF' },
   dateText: { fontSize: 12, fontWeight: '600', color: '#A0AEC0', marginTop: 1 },
   photoLoggedBadge: { backgroundColor: '#EBF4FF', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, borderWidth: 1, borderColor: '#BEE3F8', flexDirection: 'row', alignItems: 'center' },
   photoLoggedBadgeText: { color: '#007AFF', fontSize: 10, fontWeight: '700' },
-  
   punchRow: { flexDirection: 'row', justifyContent: 'space-between', width: '100%' },
   punchItem: { width: '31.5%', backgroundColor: '#F7FAFC', padding: 8, borderRadius: 10, borderWidth: 1, borderColor: '#E2E8F0', alignItems: 'center' },
   punchItemAbsent: { backgroundColor: '#FFF5F5', borderColor: '#FED7D7' },
   punchLabel: { fontSize: 9, fontWeight: '800', color: '#A0AEC0', marginBottom: 4 },
   punchTime: { fontSize: 12, fontWeight: '800' },
-  
   loginColor: { color: '#38A169' },
   logoutColor: { color: '#4A5568' },
   absentColor: { color: '#E53E3E' },
   emptyColor: { color: '#A0AEC0', fontWeight: '400' },
   expandTipText: { fontSize: 10, color: '#A0AEC0', fontWeight: '600', textAlign: 'center', marginTop: 10, letterSpacing: 0.1 },
-  
   photoDrawerContainer: { backgroundColor: '#F8FAFC', borderBottomLeftRadius: 16, borderBottomRightRadius: 16, borderWidth: 1, borderColor: '#CBD5E0', padding: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.01, shadowRadius: 4, elevation: 1 },
   drawerLabelTitle: { fontSize: 11, fontWeight: '800', color: '#718096', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 10 },
   photoGridRow: { flexDirection: 'row', justifyContent: 'space-between', width: '100%' },
   photoBlock: { width: '48%' },
   photoGridLabel: { fontSize: 10, fontWeight: '700', color: '#718096', marginBottom: 4 },
-  
   imageOverlayWrapper: { position: 'relative', overflow: 'hidden', borderRadius: 12 },
   drawerSelfiePreviewImage: { width: '100%', height: 140, backgroundColor: '#EDF2F7', resizeMode: 'cover' },
-  
   thumbnailGeotagStamp: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(0, 0, 0, 0.8)', paddingVertical: 4, paddingHorizontal: 6, flexDirection: 'row', alignItems: 'center' },
   thumbnailGeotagText: { color: '#FFFFFF', fontSize: 8, fontWeight: '700', flex: 1 },
-
   noImageDashedPlaceholder: { width: '100%', paddingVertical: 36, backgroundColor: '#FFFFFF', borderRadius: 10, borderWidth: 1, borderStyle: 'dashed', borderColor: '#CBD5E0', justifyContent: 'center', alignItems: 'center' },
   noImagePlaceholderText: { color: '#A0AEC0', fontSize: 11, fontWeight: '600', fontStyle: 'italic' },
-  
   emptyContainer: { flex: 0.8, justifyContent: 'center', alignItems: 'center', minHeight: 300 },
   emptyIconCircle: { width: 54, height: 54, borderRadius: 27, backgroundColor: '#EDF2F7', justifyContent: 'center', alignItems: 'center', marginBottom: 10 },
   emptyText: { color: '#718096', fontSize: 14, fontWeight: '600' },
-
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', alignItems: 'center', padding: 16 },
   modalCardContainer: { width: '100%', maxWidth: 360, alignItems: 'center', position: 'relative' },
   modalCloseButton: { position: 'absolute', top: -45, right: 0, zIndex: 10 },
-  
   geotagPhotoFrame: { width: '100%', height: 460, borderRadius: 20, overflow: 'hidden', position: 'relative', backgroundColor: '#000', borderWidth: 2, borderColor: '#FFFFFF' },
   modalFullImage: { width: '100%', height: '100%', resizeMode: 'cover' },
-
-  geotagStampOverlay: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: 'rgba(18, 18, 18, 0.88)',
-    padding: 12,
-  },
+  geotagStampOverlay: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(18, 18, 18, 0.88)', padding: 12 },
   geotagStampHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
   geotagStampTitle: { color: '#FFD700', fontSize: 10, fontWeight: '900', marginLeft: 5, letterSpacing: 0.8 },
   geotagStampAddress: { color: '#FFFFFF', fontSize: 10, fontWeight: '600', lineHeight: 14, marginBottom: 8 },

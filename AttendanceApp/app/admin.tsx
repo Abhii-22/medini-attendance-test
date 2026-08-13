@@ -40,7 +40,6 @@ export default function AdminScreen() {
   const [attendanceLogs, setAttendanceLogs] = useState<AttendanceRecord[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
-  // 🔍 SEARCH QUERY STATES
   const [empSearchQuery, setEmpSearchQuery] = useState<string>('');
   const [logSearchQuery, setLogSearchQuery] = useState<string>('');
 
@@ -50,7 +49,6 @@ export default function AdminScreen() {
   const [empEmail, setEmpEmail] = useState('');
   const [empPassword, setEmpPassword] = useState('');
   
-  // 🍱 DROPDOWN LUNCH TIMING SELECTION STATES
   const [selectedLunchHours, setSelectedLunchHours] = useState<number>(0);
   const [selectedLunchMins, setSelectedLunchMins] = useState<number>(0);
   const [showHoursDropdown, setShowHoursDropdown] = useState<boolean>(false);
@@ -73,7 +71,6 @@ export default function AdminScreen() {
   const hoursList = Array.from({ length: 13 }, (_, i) => i);
   const minutesList = Array.from({ length: 60 }, (_, i) => i);
 
-  // ⏱️ WORKING HOURS CALCULATOR WITH LUNCH DEDUCTION MATCHING
   const calculateWorkingHours = (inTime: string, outTime: string, employeeNameTarget?: string, employeeIdTarget?: string) => {
     if (!inTime || !outTime || inTime === '--:--' || outTime === '--:--' || inTime === 'ABSENT' || outTime === 'ABSENT') {
       return '--';
@@ -221,14 +218,14 @@ export default function AdminScreen() {
       return;
     }
 
-    const calculatedTotalLunchMinutes = Number(selectedLunchHours) * 60 + Number(selectedLunchMins);
+    const calculatedTotalLunchMinutes = (Number(selectedLunchHours) * 60) + Number(selectedLunchMins);
 
     const payload: any = {
       name: empName.trim(),
       employeeId: empIdCode.trim().toUpperCase(),
       designation: empDesignation.trim(),
       email: empEmail.trim().toLowerCase(),
-      lunchBreakMinutes: calculatedTotalLunchMinutes,
+      lunchBreakMinutes: isNaN(calculatedTotalLunchMinutes) ? 0 : calculatedTotalLunchMinutes,
       role: 'EMPLOYEE'
     };
 
@@ -367,7 +364,6 @@ export default function AdminScreen() {
 
   return (
     <View style={styles.container}>
-      {/* BANNER HEADER */}
       <View style={styles.headerHeroCard}>
         <View style={styles.headerInfoBlock}>
           <Text style={styles.headerSubtitle}>MASTER MANAGEMENT HUB</Text>
@@ -379,7 +375,6 @@ export default function AdminScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* METRIC BADGES */}
       <View style={styles.summaryGridContainer}>
         <View style={[styles.statBoxSummary, { borderLeftColor: '#007AFF' }]}>
           <Text style={styles.statBoxNumber}>
@@ -401,7 +396,6 @@ export default function AdminScreen() {
         </View>
       </View>
 
-      {/* STRIP TABS */}
       <View style={styles.menuToggleRow}>
         <TouchableOpacity style={[styles.menuTab, activeTab === 'REGISTER' && styles.activeMenuTab]} onPress={() => { setActiveTab('REGISTER'); clearAllFormStates(); }}>
           <Ionicons name="person-add-outline" size={14} color={activeTab === 'REGISTER' ? '#007AFF' : '#718096'} style={{ marginRight: 6 }} />
@@ -416,7 +410,6 @@ export default function AdminScreen() {
       {activeTab === 'REGISTER' && (
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
           
-          {/* 👤 FORM 1: STANDARD EMPLOYEE */}
           {(!isEditing || (isEditing && !employees.find(e => e._id === editingTargetId)?.role?.includes('ADMIN_VIEW'))) && (
             <View style={styles.formCard}>
               <View style={styles.cardHeaderRow}>
@@ -443,7 +436,6 @@ export default function AdminScreen() {
               <Text style={styles.inputLabel}>Official Email Address</Text>
               <TextInput style={styles.input} value={empEmail} onChangeText={setEmpEmail} placeholder="worker@medini.com" placeholderTextColor="#A0AEC0" keyboardType="email-address" autoCapitalize="none" />
 
-              {/* 🍱 DROPDOWN LUNCH BREAK SELECTION */}
               <Text style={styles.inputLabel}>Set Fixed Lunch Break Duration</Text>
               <View style={styles.dropdownPickerRow}>
                 
@@ -512,7 +504,6 @@ export default function AdminScreen() {
             </View>
           )}
 
-          {/* 👁️ FORM 2: ADMIN VIEW SUPERVISOR */}
           {(!isEditing || (isEditing && employees.find(e => e._id === editingTargetId)?.role?.includes('ADMIN_VIEW'))) && (
             <View style={[styles.formCard, { borderTopColor: '#805AD5', borderTopWidth: 4 }]}>
               <View style={styles.cardHeaderRow}>
@@ -576,13 +567,11 @@ export default function AdminScreen() {
             </View>
           )}
 
-          {/* ACTIVE REGISTRY DIRECTORY LIST */}
           <View style={styles.sectionHeaderRowInline}>
             <Ionicons name="folder-open-outline" size={15} color="#2B6CB0" />
             <Text style={styles.sectionHeadingLabelInline}>System Master Accounts Directory</Text>
           </View>
 
-          {/* 🔍 DIRECTORY SEARCH BAR */}
           <View style={styles.searchBarContainer}>
             <Ionicons name="search-outline" size={16} color="#718096" style={{ marginRight: 8 }} />
             <TextInput
@@ -758,7 +747,6 @@ export default function AdminScreen() {
         </View>
       )}
 
-      {/* 🍱 HOURS SELECTION DROPDOWN MODAL */}
       <Modal
         visible={showHoursDropdown}
         transparent={true}
@@ -789,7 +777,6 @@ export default function AdminScreen() {
         </TouchableOpacity>
       </Modal>
 
-      {/* 🍱 MINUTES SELECTION DROPDOWN MODAL */}
       <Modal
         visible={showMinsDropdown}
         transparent={true}
@@ -849,19 +836,15 @@ const styles = StyleSheet.create({
   inputLabel: { fontSize: 11, fontWeight: '700', color: '#718096', marginBottom: 5, marginTop: 10, textTransform: 'uppercase', letterSpacing: 0.3 },
   subInputLabel: { fontSize: 10, fontWeight: '700', color: '#A0AEC0', marginBottom: 4, textTransform: 'uppercase' },
   input: { backgroundColor: '#F7FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 14, color: '#2D3748', marginBottom: 4 },
-  
   dropdownPickerRow: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginBottom: 4 },
   dropdownTriggerBtn: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#F7FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12 },
   dropdownValueText: { fontSize: 13, fontWeight: '700', color: '#2D3748' },
   lunchSummaryNote: { fontSize: 11, color: '#007AFF', fontWeight: '800', marginTop: 4, marginBottom: 6 },
-
   searchBarContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#CBD5E0', borderRadius: 12, paddingHorizontal: 12, height: 42, marginBottom: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.02, shadowRadius: 3, elevation: 1 },
   searchInput: { flex: 1, fontSize: 13, color: '#2D3748', fontWeight: '600' },
-
   passwordInputContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F7FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 12, marginBottom: 4 },
   passwordInput: { flex: 1, paddingHorizontal: 14, paddingVertical: 12, fontSize: 14, color: '#2D3748' },
   eyeIconBtn: { paddingHorizontal: 12, paddingVertical: 10 },
-
   inlineInputsRow: { flexDirection: 'row', justifyContent: 'space-between', width: '100%' },
   formActionBtnGroup: { flexDirection: 'row', marginTop: 15, width: '100%' },
   submitButton: { backgroundColor: '#007AFF', paddingVertical: 12, borderRadius: 12, alignItems: 'center', justifyContent: 'center', flexDirection: 'row' },
@@ -908,7 +891,6 @@ const styles = StyleSheet.create({
   emptyCardFrame: { backgroundColor: '#FFFFFF', padding: 30, borderRadius: 16, alignItems: 'center', borderWidth: 1, borderColor: '#E2E8F0' },
   emptyTextMessage: { color: '#A0AEC0', fontSize: 12, fontStyle: 'italic', fontWeight: '600', textAlign: 'center', marginTop: 4 },
   emptyTextSub: { color: '#A0AEC0', fontSize: 12, fontWeight: '600', textAlign: 'center', marginVertical: 15, fontStyle: 'italic' },
-
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 20 },
   dropdownModalCard: { width: '85%', maxWidth: 300, backgroundColor: '#FFFFFF', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: '#E2E8F0', elevation: 5 },
   dropdownModalTitle: { fontSize: 13, fontWeight: '800', color: '#1A202C', marginBottom: 12, textTransform: 'uppercase', textAlign: 'center' },

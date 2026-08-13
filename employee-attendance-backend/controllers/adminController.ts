@@ -40,6 +40,8 @@ export const registerEmployee = async (req: Request, res: Response): Promise<any
       return res.status(400).json({ success: false, message: 'Registration Denied: This Employee ID is already assigned to a staff profile.' });
     }
 
+    const parsedLunchMinutes = lunchBreakMinutes !== undefined && lunchBreakMinutes !== null ? Number(lunchBreakMinutes) : 0;
+
     const newEmployee = new RegisteredEmployee({
       name: name.trim(),
       employeeId: searchId,
@@ -47,7 +49,7 @@ export const registerEmployee = async (req: Request, res: Response): Promise<any
       email: searchEmail,
       password: password, 
       role: [targetRole],
-      lunchBreakMinutes: lunchBreakMinutes !== undefined ? Number(lunchBreakMinutes) : 0
+      lunchBreakMinutes: isNaN(parsedLunchMinutes) ? 0 : parsedLunchMinutes
     });
 
     await newEmployee.save();
@@ -81,8 +83,9 @@ export const updateEmployee = async (req: Request, res: Response): Promise<any> 
       updatePayload.password = password;
     }
 
-    if (lunchBreakMinutes !== undefined) {
-      updatePayload.lunchBreakMinutes = Number(lunchBreakMinutes) || 0;
+    if (lunchBreakMinutes !== undefined && lunchBreakMinutes !== null) {
+      const parsedLunchMinutes = Number(lunchBreakMinutes);
+      updatePayload.lunchBreakMinutes = isNaN(parsedLunchMinutes) ? 0 : parsedLunchMinutes;
     }
 
     if (role) {
