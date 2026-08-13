@@ -47,7 +47,7 @@ export const registerEmployee = async (req: Request, res: Response): Promise<any
       email: searchEmail,
       password: password, 
       role: [targetRole],
-      lunchBreakMinutes: Number(lunchBreakMinutes) || 0 // 🍱 SAVE LUNCH DURATION DYNAMICALLY
+      lunchBreakMinutes: lunchBreakMinutes !== undefined ? Number(lunchBreakMinutes) : 0
     });
 
     await newEmployee.save();
@@ -74,11 +74,13 @@ export const updateEmployee = async (req: Request, res: Response): Promise<any> 
     const updatePayload: any = {
       name: name.trim(),
       designation: designation.trim(),
-      email: email.trim().toLowerCase(),
-      password: password
+      email: email.trim().toLowerCase()
     };
 
-    // 🍱 UPDATE LUNCH DURATION IF PASSED
+    if (password && String(password).trim() !== '') {
+      updatePayload.password = password;
+    }
+
     if (lunchBreakMinutes !== undefined) {
       updatePayload.lunchBreakMinutes = Number(lunchBreakMinutes) || 0;
     }
@@ -87,7 +89,7 @@ export const updateEmployee = async (req: Request, res: Response): Promise<any> 
       updatePayload.role = [role];
     }
 
-    const updatedEmployee = await RegisteredEmployee.findByIdAndUpdate(_id, updatePayload, { new: true });
+    const updatedEmployee = await RegisteredEmployee.findByIdAndUpdate(_id, updatePayload, { new: true, runValidators: true });
 
     if (!updatedEmployee) {
       return res.status(404).json({ success: false, message: "Target workspace record could not be found." });
@@ -95,7 +97,7 @@ export const updateEmployee = async (req: Request, res: Response): Promise<any> 
 
     return res.status(200).json({ success: true, employee: updatedEmployee });
   } catch (err: any) {
-    return res.status(400).json({ success: false, message: "Email assignment already in active use.", error: err });
+    return res.status(400).json({ success: false, message: "Failed to update employee profile.", error: err.message || err });
   }
 };
 

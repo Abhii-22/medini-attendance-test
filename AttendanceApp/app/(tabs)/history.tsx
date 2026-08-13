@@ -5,6 +5,8 @@ import { Ionicons } from '@expo/vector-icons';
 
 interface BackendLog {
   _id: string;
+  employeeIdReference: string;
+  employeeName: string;
   date: string;
   dayOfWeek: string;
   loginTime: string;
@@ -83,12 +85,6 @@ export default function HistoryScreen() {
 
   const fetchEmployeeLunchProfile = async () => {
     if (!currentUser) return;
-
-    // Check if currentUser context already has lunchBreakMinutes stored
-    if (currentUser.lunchBreakMinutes !== undefined) {
-      setEmployeeLunchMins(Number(currentUser.lunchBreakMinutes));
-    }
-
     try {
       const response = await fetch(`${API_BASE_URL}/admin/employees`);
       if (response.ok) {
@@ -100,11 +96,13 @@ export default function HistoryScreen() {
         const currentProfile = data.find((e: any) => {
           const eName = e.name?.toLowerCase().trim();
           const eId = e.employeeId?.toLowerCase().trim();
-          return (cleanCurrentName && eName === cleanCurrentName) || (cleanCurrentId && eId === cleanCurrentId);
+          return (cleanCurrentId && eId === cleanCurrentId) || (cleanCurrentName && eName === cleanCurrentName);
         });
 
         if (currentProfile && currentProfile.lunchBreakMinutes !== undefined) {
           setEmployeeLunchMins(Number(currentProfile.lunchBreakMinutes));
+        } else {
+          setEmployeeLunchMins(0);
         }
       }
     } catch (e) {
@@ -277,6 +275,7 @@ export default function HistoryScreen() {
                     <View style={[styles.punchItem, { backgroundColor: '#F0FDF4', borderColor: '#DCFCE7' }, isAbsent && { backgroundColor: '#FFF5F5', borderColor: '#FED7D7' }]}>
                       <Text style={[styles.punchLabel, { color: '#16A34A' }, isAbsent && { color: '#E53E3E' }]}>DURATION</Text>
                       <Text style={[styles.punchTime, { color: '#15803D' }, isAbsent && { color: '#E53E3E' }]}>
+                        {/* 🍱 PASSING employeeLunchMins EXPLICITLY HERE */}
                         {calculateWorkingHours(item.loginTime, item.logoutTime, employeeLunchMins)}
                       </Text>
                     </View>

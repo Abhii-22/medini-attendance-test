@@ -50,9 +50,9 @@ export default function AdminScreen() {
   const [empEmail, setEmpEmail] = useState('');
   const [empPassword, setEmpPassword] = useState('');
   
-  // 🍱 DROPDOWN LUNCH TIMING SELECTION STATES
+  // 🍱 DROPDOWN LUNCH TIMING SELECTION STATES (DEFAULTED STRICTLY TO 0)
   const [selectedLunchHours, setSelectedLunchHours] = useState<number>(0);
-  const [selectedLunchMins, setSelectedLunchMins] = useState<number>(30);
+  const [selectedLunchMins, setSelectedLunchMins] = useState<number>(0);
   const [showHoursDropdown, setShowHoursDropdown] = useState<boolean>(false);
   const [showMinsDropdown, setShowMinsDropdown] = useState<boolean>(false);
 
@@ -73,8 +73,8 @@ export default function AdminScreen() {
   const hoursList = Array.from({ length: 13 }, (_, i) => i);
   const minutesList = Array.from({ length: 60 }, (_, i) => i);
 
-  // ⏱️ ACCURATE WORKING HOURS CALCULATOR WITH LUNCH DEDUCTION
-  const calculateWorkingHours = (inTime: string, outTime: string, employeeNameTarget?: string) => {
+  // ⏱️ ACCURATE WORKING HOURS CALCULATOR WITH LUNCH DEDUCTION MATCHING BY ID & NAME
+  const calculateWorkingHours = (inTime: string, outTime: string, employeeNameTarget?: string, employeeIdTarget?: string) => {
     if (!inTime || !outTime || inTime === '--:--' || outTime === '--:--' || inTime === 'ABSENT' || outTime === 'ABSENT') {
       return '--';
     }
@@ -102,11 +102,15 @@ export default function AdminScreen() {
       const grossMinutes = outMins - inMins;
       if (grossMinutes <= 0) return '0h 0m';
 
-      // Find exact lunch break duration for employee
-      const matchedEmp = employees.find(e => e.name?.toLowerCase().trim() === employeeNameTarget?.toLowerCase().trim());
+      // Find exact lunch break duration for employee by ID or Name
+      const matchedEmp = employees.find(e => 
+        (employeeIdTarget && e.employeeId?.toLowerCase().trim() === employeeIdTarget?.toLowerCase().trim()) ||
+        (employeeNameTarget && e.name?.toLowerCase().trim() === employeeNameTarget?.toLowerCase().trim())
+      );
+
       const lunchDeduction = matchedEmp?.lunchBreakMinutes !== undefined 
         ? Number(matchedEmp.lunchBreakMinutes) 
-        : (selectedLunchHours * 60 + selectedLunchMins);
+        : 0;
 
       const netMinutes = grossMinutes >= lunchDeduction ? grossMinutes - lunchDeduction : 0;
 
@@ -213,7 +217,6 @@ export default function AdminScreen() {
   };
 
   const handleCreateEmployeeSubmit = async () => {
-    // Password required for new profiles, optional during edits
     if (!empName || !empIdCode || !empDesignation || !empEmail || (!isEditing && !empPassword)) {
       Alert.alert('Missing Fields', 'Please fill out all required fields inside the Employee form.');
       return;
@@ -349,7 +352,7 @@ export default function AdminScreen() {
     setIsEditing(false);
     setEditingTargetId(null);
     setEmpName(''); setEmpIdCode(''); setEmpDesignation(''); setEmpEmail(''); setEmpPassword(''); 
-    setSelectedLunchHours(0); setSelectedLunchMins(30);
+    setSelectedLunchHours(0); setSelectedLunchMins(0); 
     setShowEmpPassword(false);
     setAdminName(''); setAdminIdCode(''); setAdminDesignation(''); setAdminEmail(''); setAdminPassword('');
     setShowAdminPassword(false);
@@ -619,7 +622,7 @@ export default function AdminScreen() {
                       <Text style={styles.empRowName}>{item.name} <Text style={styles.empRowId}>({item.employeeId})</Text></Text>
                       <Text style={styles.empRowSub}>
                         {item.designation}  •  <Text style={{ fontWeight: '800' }}>{isAdminView ? 'ADMIN_VIEW' : 'EMPLOYEE'}</Text>
-                        {item.lunchBreakMinutes !== undefined ? ` • ${item.lunchBreakMinutes}m Lunch` : ''}
+                        {item.lunchBreakMinutes !== undefined && item.lunchBreakMinutes > 0 ? ` • ${item.lunchBreakMinutes}m Lunch` : ''}
                       </Text>
                     </View>
                     <View style={styles.crudActionRow}>
@@ -736,7 +739,7 @@ export default function AdminScreen() {
                       <View style={[styles.metricBox, { backgroundColor: '#F0FDF4', borderColor: '#DCFCE7' }]}>
                         <Text style={[styles.metricLabel, { color: '#16A34A' }]}>HOURS WORKED</Text>
                         <Text style={[styles.metricTime, { color: '#15803D' }]}>
-                          {calculateWorkingHours(logItem.loginTime, logItem.logoutTime, logItem.employeeName)}
+                          {calculateWorkingHours(logItem.loginTime, logItem.logoutTime, logItem.employeeName, logItem.employeeIdReference)}
                         </Text>
                       </View>
                       <View style={[styles.metricBox, isAbsent && { borderColor: '#FEB2B2', backgroundColor: '#FFF5F5' }]}>

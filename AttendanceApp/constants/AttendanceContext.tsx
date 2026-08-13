@@ -6,6 +6,7 @@ export interface EmployeeCredential {
   employeeId: string;
   email: string;
   designation: string;
+  lunchBreakMinutes?: number; // 🍱 Added lunch break support[cite: 2]
 }
 
 export interface AttendanceLog {
@@ -35,7 +36,8 @@ export function AttendanceProvider({ children }: { children: React.ReactNode }) 
       name: 'John Doe',
       employeeId: 'EMP-4021',
       email: 'john.doe@company.com',
-      designation: 'Senior Software Engineer'
+      designation: 'Senior Software Engineer',
+      lunchBreakMinutes: 0 // 🍱 Default lunch minutes[cite: 2]
     }
   ]);
 
@@ -76,6 +78,7 @@ export function AttendanceProvider({ children }: { children: React.ReactNode }) 
     const createdItem: EmployeeCredential = {
       ...newEmp,
       id: Math.random().toString(),
+      lunchBreakMinutes: newEmp.lunchBreakMinutes ?? 0, // 🍱 Ensure default value[cite: 2]
     };
     setEmployees((prev) => [createdItem, ...prev]);
   };
