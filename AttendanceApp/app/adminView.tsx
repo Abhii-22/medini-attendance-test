@@ -9,6 +9,7 @@ interface EmployeeProfile {
   employeeId: string;
   designation: string;
   email: string;
+  lunchBreakMinutes?: number;
   role?: string | string[];
 }
 
@@ -64,30 +65,47 @@ export default function AdminViewScreen() {
     'July', 'August', 'September', 'October', 'November', 'December'
   ];
 
-  // ⏱️ STABLE TYPE-SAFE WORK HOURS CALCULATOR
-  const calculateWorkingHours = (inTime: string, outTime: string) => {
+  // ⏱️ ACCURATE WORKING HOURS CALCULATOR WITH LUNCH DEDUCTION MATCHING HISTORY PAGE
+  const calculateWorkingHours = (inTime: string, outTime: string, employeeNameTarget?: string, employeeIdTarget?: string) => {
     if (!inTime || !outTime || inTime === '--:--' || outTime === '--:--' || inTime === 'ABSENT' || outTime === 'ABSENT') {
       return '--';
     }
     try {
       const parseTimeToMinutes = (timeStr: string) => {
-        const parts = timeStr.split(' ');
-        const timePart = parts[0] || '0:0';
-        const modifier = parts[1] || 'AM';
+        const cleanTime = timeStr.trim().toUpperCase();
+        const isPM = cleanTime.includes('PM');
+        const isAM = cleanTime.includes('AM');
+        
+        const timeOnly = cleanTime.replace(/(AM|PM)/g, '').trim();
+        const parts = timeOnly.split(/[:\.]/).map(Number);
+        
+        let hours = parts[0] || 0;
+        const minutes = parts[1] || 0;
 
-        const timeSplit = timePart.split(':');
-        let hours = Number(timeSplit[0]) || 0;
-        const minutes = Number(timeSplit[1]) || 0;
+        if (isPM && hours < 12) hours += 12;
+        if (isAM && hours === 12) hours = 0;
 
-        if (modifier === 'PM' && hours < 12) hours += 12;
-        if (modifier === 'AM' && hours === 12) hours = 0;
         return hours * 60 + minutes;
       };
 
-      const diffInMinutes = parseTimeToMinutes(outTime) - parseTimeToMinutes(inTime);
-      if (diffInMinutes <= 0) return '0h 0m';
+      const inMins = parseTimeToMinutes(inTime);
+      const outMins = parseTimeToMinutes(outTime);
 
-      return `${Math.floor(diffInMinutes / 60)}h ${diffInMinutes % 60}m`;
+      const grossMinutes = outMins - inMins;
+      if (grossMinutes <= 0) return '0h 0m';
+
+      const matchedEmp = employees.find(e => 
+        (employeeIdTarget && e.employeeId?.toLowerCase().trim() === employeeIdTarget?.toLowerCase().trim()) ||
+        (employeeNameTarget && e.name?.toLowerCase().trim() === employeeNameTarget?.toLowerCase().trim())
+      );
+
+      const lunchDeduction = matchedEmp?.lunchBreakMinutes !== undefined 
+        ? Number(matchedEmp.lunchBreakMinutes) 
+        : 0;
+
+      const netMinutes = grossMinutes >= lunchDeduction ? grossMinutes - lunchDeduction : 0;
+
+      return `${Math.floor(netMinutes / 60)}h ${netMinutes % 60}m`;
     } catch (e) {
       return '--';
     }
@@ -243,12 +261,22 @@ export default function AdminViewScreen() {
       
       {/* SUPERVISOR DASHBOARD BANNER */}
       <View style={styles.headerHeroCard}>
-        <View style={styles.headerInfoBlock}>
-          <Text style={styles.headerSubtitle}>ADMINISTRATIVE INSPECTION VIEW</Text>
-          <Text style={styles.headerTitle}>Welcome, {currentUser?.name || 'Supervisor'}</Text>
+        <View style={styles.headerBrandBlock}>
+          <View style={styles.logoBadgeFrame}>
+            <Image 
+              source={require('../assets/images/medini new logo.jpeg')} 
+              style={styles.mediniLogoImage} 
+              resizeMode="contain"
+            />
+          </View>
+          <View style={styles.headerInfoBlock}>
+            <Text style={styles.headerSubtitle}>ADMINISTRATIVE INSPECTION VIEW</Text>
+            <Text style={styles.headerTitle}>Welcome, {currentUser?.name || 'Supervisor'}</Text>
+          </View>
         </View>
         <TouchableOpacity style={styles.exitBadgeBtn} activeOpacity={0.7} onPress={() => logout()}>
-          <Text style={styles.exitBtnText}>Sign Out 🚪</Text>
+          <Ionicons name="log-out-outline" size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
+          <Text style={styles.exitBtnText}>Sign Out</Text>
         </TouchableOpacity>
       </View>
 
@@ -405,7 +433,7 @@ export default function AdminViewScreen() {
                     <View style={[styles.metricBox, { backgroundColor: '#F0FDF4', borderColor: '#DCFCE7' }, isAbsent && { backgroundColor: '#FFF5F5', borderColor: '#FED7D7' }]}>
                       <Text style={[styles.metricLabel, { color: '#16A34A' }, isAbsent && { color: '#E53E3E' }]}>DURATION</Text>
                       <Text style={[styles.metricTime, { color: '#15803D' }, isAbsent && { color: '#E53E3E' }]}>
-                        {calculateWorkingHours(logItem.loginTime, logItem.logoutTime)}
+                        {calculateWorkingHours(logItem.loginTime, logItem.logoutTime, logItem.employeeName, logItem.employeeIdReference)}
                       </Text>
                     </View>
 
@@ -537,11 +565,14 @@ export default function AdminViewScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F4F7FA', paddingHorizontal: 16, paddingTop: 50 },
-  headerHeroCard: { backgroundColor: '#1A202C', padding: 20, borderRadius: 24, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
-  headerInfoBlock: { flex: 1 },
+  headerHeroCard: { backgroundColor: '#1A202C', padding: 16, borderRadius: 22, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+  headerBrandBlock: { flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 },
+  logoBadgeFrame: { width: 62, height: 62, borderRadius: 14, backgroundColor: '#FFFFFF', padding: 4, justifyContent: 'center', alignItems: 'center', marginRight: 12, borderWidth: 1, borderColor: '#E2E8F0', overflow: 'hidden' },
+  mediniLogoImage: { width: '100%', height: '100%' },
+  headerInfoBlock: { flex: 1, justifyContent: 'center' },
   headerSubtitle: { color: '#A0AEC0', fontSize: 10, fontWeight: '800', letterSpacing: 0.8 },
-  headerTitle: { color: '#FFFFFF', fontSize: 20, fontWeight: '800', marginTop: 2 },
-  exitBadgeBtn: { backgroundColor: '#4A5568', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 12 },
+  headerTitle: { color: '#FFFFFF', fontSize: 16, fontWeight: '800', marginTop: 2 },
+  exitBadgeBtn: { backgroundColor: '#E53E3E', paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10, flexDirection: 'row', alignItems: 'center', flexShrink: 0 },
   exitBtnText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' },
   sectionHeadingLabel: { fontSize: 11, fontWeight: '800', color: '#2B6CB0', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 8, marginTop: 4, paddingLeft: 2 },
   summaryGridContainer: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginBottom: 14 },

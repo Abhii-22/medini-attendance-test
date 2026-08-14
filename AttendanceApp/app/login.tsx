@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { StyleSheet, Text, View, TextInput, TouchableOpacity, Alert, KeyboardAvoidingView, Platform } from 'react-native';
+import { StyleSheet, Text, View, TextInput, TouchableOpacity, Alert, KeyboardAvoidingView, Platform, Image } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth, API_BASE_URL } from './_layout'; 
@@ -84,9 +84,15 @@ export default function LoginScreen() {
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.container}>
       <View style={styles.brandContainer}>
-        <Ionicons name="shield-checkmark" size={48} color="#007AFF" style={{ marginBottom: 10 }} />
+        <View style={styles.logoBadgeFrame}>
+          <Image 
+            source={require('../assets/images/medini new logo.jpeg')} 
+            style={styles.mediniLogoImage} 
+            resizeMode="contain"
+          />
+        </View>
         <Text style={styles.brandName}>Employee Attendance</Text>
-        <Text style={styles.brandSubtext}>Cloud-Synchronized Management Hub</Text>
+        <Text style={styles.brandSubtext}>WELLCOME!!</Text>
       </View>
 
       <View style={styles.tabToggleRow}>
@@ -146,6 +152,8 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F4F7FA', justifyContent: 'center', paddingHorizontal: 16 },
   brandContainer: { alignItems: 'center', marginBottom: 35 },
+  logoBadgeFrame: { width: 92, height: 92, borderRadius: 22, backgroundColor: '#FFFFFF', padding: 8, justifyContent: 'center', alignItems: 'center', marginBottom: 16, borderWidth: 1, borderColor: '#E2E8F0', overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 6, elevation: 2 },
+  mediniLogoImage: { width: '100%', height: '100%' },
   brandName: { fontSize: 24, fontWeight: '800', color: '#1A202C' },
   brandSubtext: { fontSize: 13, color: '#718096', marginTop: 4, fontWeight: '500' },
   tabToggleRow: { flexDirection: 'row', backgroundColor: '#E2E8F0', padding: 4, borderRadius: 12, marginBottom: 16 },

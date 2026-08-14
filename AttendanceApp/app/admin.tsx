@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert, Linking, ActivityIndicator, Modal } from 'react-native';
+import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert, Linking, ActivityIndicator, Modal, Image } from 'react-native';
 import { useAuth, API_BASE_URL } from './_layout';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 
@@ -365,9 +365,18 @@ export default function AdminScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.headerHeroCard}>
-        <View style={styles.headerInfoBlock}>
-          <Text style={styles.headerSubtitle}>MASTER MANAGEMENT HUB</Text>
-          <Text style={styles.headerTitle}>System Administrator</Text>
+        <View style={styles.headerBrandBlock}>
+          <View style={styles.logoBadgeFrame}>
+            <Image 
+              source={require('../assets/images/medini new logo.jpeg')} 
+              style={styles.mediniLogoImage} 
+              resizeMode="contain"
+            />
+          </View>
+          <View style={styles.headerInfoBlock}>
+            <Text style={styles.headerSubtitle}>MASTER MANAGEMENT HUB</Text>
+            <Text style={styles.headerTitle}>System Administrator</Text>
+          </View>
         </View>
         <TouchableOpacity style={styles.exitBadgeBtn} activeOpacity={0.7} onPress={() => logout()}>
           <Ionicons name="log-out-outline" size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
@@ -813,11 +822,14 @@ export default function AdminScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8FAFC', paddingHorizontal: 16, paddingTop: 50 },
-  headerHeroCard: { backgroundColor: '#1A202C', padding: 20, borderRadius: 20, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
-  headerInfoBlock: { flex: 1 },
+  headerHeroCard: { backgroundColor: '#1A202C', padding: 16, borderRadius: 22, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+  headerBrandBlock: { flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 },
+  logoBadgeFrame: { width: 62, height: 62, borderRadius: 14, backgroundColor: '#FFFFFF', padding: 4, justifyContent: 'center', alignItems: 'center', marginRight: 12, borderWidth: 1, borderColor: '#E2E8F0', overflow: 'hidden' },
+  mediniLogoImage: { width: '100%', height: '100%' },
+  headerInfoBlock: { flex: 1, justifyContent: 'center' },
   headerSubtitle: { color: '#A0AEC0', fontSize: 10, fontWeight: '800', letterSpacing: 0.8 },
-  headerTitle: { color: '#FFFFFF', fontSize: 20, fontWeight: '800', marginTop: 2 },
-  exitBadgeBtn: { backgroundColor: '#E53E3E', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, flexDirection: 'row', alignItems: 'center' },
+  headerTitle: { color: '#FFFFFF', fontSize: 17, fontWeight: '800', marginTop: 2 },
+  exitBadgeBtn: { backgroundColor: '#E53E3E', paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10, flexDirection: 'row', alignItems: 'center', flexShrink: 0 },
   exitBtnText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' },
   summaryGridContainer: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginBottom: 16 },
   statBoxSummary: { width: '48.5%', borderRadius: 16, padding: 14, borderWidth: 1, backgroundColor: '#FFFFFF', borderColor: '#E2E8F0', borderLeftWidth: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.01, shadowRadius: 4, elevation: 1 },

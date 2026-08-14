@@ -1,11 +1,12 @@
 import React, { useState, createContext, useContext, useEffect } from 'react';
 import { Slot, useRouter, useSegments } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { View, ActivityIndicator } from 'react-native';
 import { AttendanceProvider } from '@/constants/AttendanceContext';
 
 // 🌐 Global Production Cloud URL for your hosted Render Web Service API
-// export const API_BASE_URL = 'https://employeeattendance-1iiy.onrender.com/api';
-export const API_BASE_URL = 'https://attentdanceapi.techvruddhi.com/api'; // 🏡 Local Development URL (replace with your machine's IP)
-
+// export const API_BASE_URL = 'http://192.168.1.12:5000/api';
+export const API_BASE_URL = 'https://attentdanceapi.techvruddhi.com/api';
 
 interface AuthContextType {
   isAuthenticated: boolean;
@@ -71,7 +72,11 @@ function InitialLayoutProtection() {
 
   // 🛡️ SAFESTATE LAYOUT GUARD: Prevents rendering cycles from crashing before navigation finishes booting up
   if (!isNavigationReady) {
-    return null;
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F8FAFC' }}>
+        <ActivityIndicator size="large" color="#007AFF" />
+      </View>
+    );
   }
 
   if (!isAuthenticated) {
@@ -87,20 +92,75 @@ export default function RootLayout() {
   const [currentUser, setCurrentUser] = useState<any | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [adminTargetRoute, setAdminTargetRoute] = useState<'admin' | 'adminView' | null>(null);
+  const [isInitializing, setIsInitializing] = useState(true);
 
-  const login = (user: any, isAdminMode: boolean, targetRoute?: 'admin' | 'adminView') => {
+  // 🔄 Restore saved user session from device storage on app boot
+  useEffect(() => {
+    const loadStoredSession = async () => {
+      try {
+        const storedUser = await AsyncStorage.getItem('@current_user');
+        const storedIsAdmin = await AsyncStorage.getItem('@is_admin');
+        const storedTargetRoute = await AsyncStorage.getItem('@admin_target_route');
+
+        if (storedUser) {
+          setCurrentUser(JSON.parse(storedUser));
+          setIsAdmin(storedIsAdmin === 'true');
+          setAdminTargetRoute(storedTargetRoute as any);
+          setIsAuthenticated(true);
+        }
+      } catch (error) {
+        console.error('Failed to load stored session:', error);
+      } finally {
+        setIsInitializing(false);
+      }
+    };
+
+    loadStoredSession();
+  }, []);
+
+  const login = async (user: any, isAdminMode: boolean, targetRoute?: 'admin' | 'adminView') => {
+    const resolvedRoute = targetRoute || (isAdminMode ? 'admin' : null);
+    
     setCurrentUser(user);
     setIsAdmin(isAdminMode);
-    setAdminTargetRoute(targetRoute || (isAdminMode ? 'admin' : null));
+    setAdminTargetRoute(resolvedRoute);
     setIsAuthenticated(true);
+
+    try {
+      await AsyncStorage.setItem('@current_user', JSON.stringify(user));
+      await AsyncStorage.setItem('@is_admin', String(isAdminMode));
+      if (resolvedRoute) {
+        await AsyncStorage.setItem('@admin_target_route', resolvedRoute);
+      } else {
+        await AsyncStorage.removeItem('@admin_target_route');
+      }
+    } catch (error) {
+      console.error('Failed to save session to storage:', error);
+    }
   };
 
-  const logout = () => {
+  const logout = async () => {
     setCurrentUser(null);
     setIsAdmin(false);
     setAdminTargetRoute(null);
     setIsAuthenticated(false);
+
+    try {
+      await AsyncStorage.removeItem('@current_user');
+      await AsyncStorage.removeItem('@is_admin');
+      await AsyncStorage.removeItem('@admin_target_route');
+    } catch (error) {
+      console.error('Failed to clear stored session:', error);
+    }
   };
+
+  if (isInitializing) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F8FAFC' }}>
+        <ActivityIndicator size="large" color="#007AFF" />
+      </View>
+    );
+  }
 
   return (
     <AttendanceProvider>
