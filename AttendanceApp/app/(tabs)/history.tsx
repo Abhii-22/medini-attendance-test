@@ -5,6 +5,8 @@ import { Ionicons } from '@expo/vector-icons';
 
 interface BackendLog {
   _id: string;
+  employeeIdReference: string;
+  employeeName: string;
   date: string;
   dayOfWeek: string;
   loginTime: string;
@@ -27,8 +29,13 @@ interface PhotoModalState {
 export default function HistoryScreen() {
   const { currentUser } = useAuth();
   const [cloudLogs, setCloudLogs] = useState<BackendLog[]>([]);
+  const [employeeLunchMins, setEmployeeLunchMins] = useState<number>(0);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
+
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [isCalendarVisible, setIsCalendarVisible] = useState<boolean>(false);
+  const [calendarViewDate, setCalendarViewDate] = useState<Date>(new Date());
 
   const [modalState, setModalState] = useState<PhotoModalState>({
     visible: false,
@@ -39,25 +46,66 @@ export default function HistoryScreen() {
     time: ''
   });
 
-  const calculateWorkingHours = (inTime: string, outTime: string) => {
+  const calculateWorkingHours = (inTime: string, outTime: string, lunchBreakMinutes: number = 0) => {
     if (!inTime || !outTime || inTime === '--:--' || outTime === '--:--' || inTime === 'ABSENT' || outTime === 'ABSENT') {
       return '--';
     }
     try {
       const parseTimeToMinutes = (timeStr: string) => {
-        const [time, modifier] = timeStr.split(' ');
-        let [hours, minutes] = time.split(':').map(Number);
-        if (modifier === 'PM' && hours < 12) hours += 12;
-        if (modifier === 'AM' && hours === 12) hours = 0;
+        const cleanTime = timeStr.trim().toUpperCase();
+        const isPM = cleanTime.includes('PM');
+        const isAM = cleanTime.includes('AM');
+        
+        const timeOnly = cleanTime.replace(/(AM|PM)/g, '').trim();
+        const parts = timeOnly.split(/[:\.]/).map(Number);
+        
+        let hours = parts[0] || 0;
+        const minutes = parts[1] || 0;
+
+        if (isPM && hours < 12) hours += 12;
+        if (isAM && hours === 12) hours = 0;
+
         return hours * 60 + minutes;
       };
 
-      const diffInMinutes = parseTimeToMinutes(outTime) - parseTimeToMinutes(inTime);
-      if (diffInMinutes <= 0) return '0h 0m';
+      const inMins = parseTimeToMinutes(inTime);
+      const outMins = parseTimeToMinutes(outTime);
 
-      return `${Math.floor(diffInMinutes / 60)}h ${diffInMinutes % 60}m`;
+      const grossMinutes = outMins - inMins;
+      if (grossMinutes <= 0) return '0h 0m';
+
+      const netMinutes = grossMinutes >= lunchBreakMinutes ? grossMinutes - lunchBreakMinutes : 0;
+
+      return `${Math.floor(netMinutes / 60)}h ${netMinutes % 60}m`;
     } catch (e) {
       return '--';
+    }
+  };
+
+  const fetchEmployeeLunchProfile = async () => {
+    if (!currentUser) return;
+    try {
+      const response = await fetch(`${API_BASE_URL}/admin/employees`);
+      if (response.ok) {
+        const data = await response.json();
+        
+        const cleanCurrentName = currentUser.name?.toLowerCase().trim();
+        const cleanCurrentId = currentUser.employeeId?.toLowerCase().trim();
+
+        const currentProfile = data.find((e: any) => {
+          const eName = e.name?.toLowerCase().trim();
+          const eId = e.employeeId?.toLowerCase().trim();
+          return (cleanCurrentId && eId === cleanCurrentId) || (cleanCurrentName && eName === cleanCurrentName);
+        });
+
+        if (currentProfile && currentProfile.lunchBreakMinutes !== undefined) {
+          setEmployeeLunchMins(Number(currentProfile.lunchBreakMinutes));
+        } else {
+          setEmployeeLunchMins(0);
+        }
+      }
+    } catch (e) {
+      console.error('Error fetching employee lunch profile:', e);
     }
   };
 
@@ -79,8 +127,42 @@ export default function HistoryScreen() {
   };
 
   useEffect(() => {
+    fetchEmployeeLunchProfile();
     fetchPermanentCloudHistory();
   }, [currentUser]);
+
+  const year = calendarViewDate.getFullYear();
+  const month = calendarViewDate.getMonth();
+
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const firstDayIndex = new Date(year, month, 1).getDay();
+
+  const monthNames = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+  ];
+
+  const handlePrevMonth = () => {
+    setCalendarViewDate(new Date(year, month - 1, 1));
+  };
+
+  const handleNextMonth = () => {
+    setCalendarViewDate(new Date(year, month + 1, 1));
+  };
+
+  const handleSelectDay = (day: number) => {
+    const selectedObj = new Date(year, month, day);
+    const formatted = selectedObj.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+    setSelectedDate(formatted);
+    setIsCalendarVisible(false);
+  };
+
+  const filteredLogs = cloudLogs.filter((item) => {
+    if (!selectedDate) return true;
+    if (!item.date) return false;
+
+    return item.date.trim().toLowerCase().includes(selectedDate.trim().toLowerCase());
+  });
 
   const handleToggleDrawer = (id: string) => {
     setExpandedLogId(expandedLogId === id ? null : id);
@@ -96,7 +178,7 @@ export default function HistoryScreen() {
     setModalState({
       visible: true,
       imageUri,
-      location: location || '', // 🚀 Raw address string directly from backend
+      location: location || '',
       type,
       date,
       time
@@ -114,10 +196,32 @@ export default function HistoryScreen() {
           <Ionicons name="time-outline" size={18} color="#1A202C" />
           <Text style={styles.sectionTitle}>Attendance Logs Timeline</Text>
         </View>
-        <TouchableOpacity style={styles.refreshIconBtn} onPress={fetchPermanentCloudHistory}>
+        <TouchableOpacity style={styles.refreshIconBtn} onPress={() => { fetchEmployeeLunchProfile(); fetchPermanentCloudHistory(); }}>
           <Ionicons name="refresh-outline" size={13} color="#2B6CB0" style={{ marginRight: 4 }} />
           <Text style={styles.refreshIconText}>Refresh</Text>
         </TouchableOpacity>
+      </View>
+
+      <View style={styles.calendarFilterBarContainer}>
+        <TouchableOpacity 
+          style={styles.calendarPickerBtn}
+          activeOpacity={0.8}
+          onPress={() => setIsCalendarVisible(true)}
+        >
+          <Ionicons name="calendar-sharp" size={18} color="#007AFF" style={{ marginRight: 8 }} />
+          <Text style={[styles.calendarPickerBtnText, selectedDate && styles.calendarPickerSelectedText]}>
+            {selectedDate ? `Date: ${selectedDate}` : 'Select Date from Calendar'}
+          </Text>
+        </TouchableOpacity>
+
+        {selectedDate && (
+          <TouchableOpacity 
+            style={styles.clearDateFilterBtn} 
+            onPress={() => setSelectedDate(null)}
+          >
+            <Ionicons name="close-circle" size={20} color="#E53E3E" />
+          </TouchableOpacity>
+        )}
       </View>
 
       {isLoading ? (
@@ -125,16 +229,18 @@ export default function HistoryScreen() {
           <ActivityIndicator size="small" color="#007AFF" />
           <Text style={[styles.emptyText, { marginTop: 10 }]}>Syncing with cloud database...</Text>
         </View>
-      ) : cloudLogs.length === 0 ? (
+      ) : filteredLogs.length === 0 ? (
         <View style={styles.emptyContainer}>
           <View style={styles.emptyIconCircle}>
             <Ionicons name="calendar-outline" size={24} color="#718096" />
           </View>
-          <Text style={styles.emptyText}>No active history logs available.</Text>
+          <Text style={styles.emptyText}>
+            {selectedDate ? `No attendance logs recorded for ${selectedDate}.` : 'No active history logs available.'}
+          </Text>
         </View>
       ) : (
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 30 }}>
-          {cloudLogs.map((item) => {
+          {filteredLogs.map((item) => {
             const isExpanded = expandedLogId === item._id;
             const hasInPhoto = !!item.capturedPhotoInUri;
             const hasOutPhoto = !!item.capturedPhotoOutUri;
@@ -168,7 +274,7 @@ export default function HistoryScreen() {
                     <View style={[styles.punchItem, { backgroundColor: '#F0FDF4', borderColor: '#DCFCE7' }, isAbsent && { backgroundColor: '#FFF5F5', borderColor: '#FED7D7' }]}>
                       <Text style={[styles.punchLabel, { color: '#16A34A' }, isAbsent && { color: '#E53E3E' }]}>DURATION</Text>
                       <Text style={[styles.punchTime, { color: '#15803D' }, isAbsent && { color: '#E53E3E' }]}>
-                        {calculateWorkingHours(item.loginTime, item.logoutTime)}
+                        {calculateWorkingHours(item.loginTime, item.logoutTime, employeeLunchMins)}
                       </Text>
                     </View>
 
@@ -197,7 +303,6 @@ export default function HistoryScreen() {
                     <Text style={styles.drawerLabelTitle}>Biometric Verification Snapshots:</Text>
                     <View style={styles.photoGridRow}>
                       
-                      {/* 📥 PUNCH IN THUMBNAIL */}
                       <View style={styles.photoBlock}>
                         <Text style={styles.photoGridLabel}>📥 Punch In Capture:</Text>
                         {hasInPhoto ? (
@@ -223,7 +328,6 @@ export default function HistoryScreen() {
                         )}
                       </View>
 
-                      {/* 📤 PUNCH OUT THUMBNAIL */}
                       <View style={styles.photoBlock}>
                         <Text style={styles.photoGridLabel}>📤 Punch Out Capture:</Text>
                         {hasOutPhoto ? (
@@ -258,7 +362,82 @@ export default function HistoryScreen() {
         </ScrollView>
       )}
 
-      {/* POPUP MODAL */}
+      <Modal
+        visible={isCalendarVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setIsCalendarVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.calendarModalCard}>
+            
+            <View style={styles.calendarHeaderRow}>
+              <TouchableOpacity onPress={handlePrevMonth} style={styles.calNavBtn}>
+                <Ionicons name="chevron-back" size={20} color="#2D3748" />
+              </TouchableOpacity>
+              
+              <Text style={styles.calMonthTitle}>
+                {monthNames[month]} {year}
+              </Text>
+              
+              <TouchableOpacity onPress={handleNextMonth} style={styles.calNavBtn}>
+                <Ionicons name="chevron-forward" size={20} color="#2D3748" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.weekDaysRow}>
+              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d, index) => (
+                <Text key={index} style={styles.weekDayText}>{d}</Text>
+              ))}
+            </View>
+
+            <View style={styles.daysGrid}>
+              {Array.from({ length: firstDayIndex }).map((_, idx) => (
+                <View key={`empty-${idx}`} style={styles.dayCell} />
+              ))}
+
+              {Array.from({ length: daysInMonth }).map((_, idx) => {
+                const dayNum = idx + 1;
+                const cellObj = new Date(year, month, dayNum);
+                const cellFormatted = cellObj.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+                const isSelected = selectedDate === cellFormatted;
+
+                return (
+                  <TouchableOpacity
+                    key={dayNum}
+                    style={[styles.dayCell, isSelected && styles.selectedDayCell]}
+                    onPress={() => handleSelectDay(dayNum)}
+                  >
+                    <Text style={[styles.dayCellText, isSelected && styles.selectedDayCellText]}>
+                      {dayNum}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <View style={styles.calModalFooterRow}>
+              {selectedDate && (
+                <TouchableOpacity 
+                  style={styles.calResetBtn} 
+                  onPress={() => { setSelectedDate(null); setIsCalendarVisible(false); }}
+                >
+                  <Text style={styles.calResetBtnText}>Show All Logs</Text>
+                </TouchableOpacity>
+              )}
+              
+              <TouchableOpacity 
+                style={styles.calCloseBtn} 
+                onPress={() => setIsCalendarVisible(false)}
+              >
+                <Text style={styles.calCloseBtnText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+
+          </View>
+        </View>
+      </Modal>
+
       <Modal
         visible={modalState.visible}
         transparent={true}
@@ -281,7 +460,6 @@ export default function HistoryScreen() {
                     <Text style={styles.geotagStampTitle}>GPS MAP CAMERA</Text>
                   </View>
                   
-                  {/* EXACT LOCATION TEXT CAPTURED */}
                   <Text style={styles.geotagStampAddress}>
                     {modalState.location}
                   </Text>
@@ -304,68 +482,70 @@ export default function HistoryScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8FAFC', paddingHorizontal: 16, paddingTop: 20 },
-  headerTitleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  headerTitleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   sectionTitle: { fontSize: 14, fontWeight: '800', color: '#1A202C', marginLeft: 6, textTransform: 'uppercase', letterSpacing: 0.3 },
   refreshIconBtn: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E2E8F0', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 10, flexDirection: 'row', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.01, shadowRadius: 2, elevation: 1 },
   refreshIconText: { color: '#4A5568', fontSize: 11, fontWeight: '700' },
-  
+  calendarFilterBarContainer: { flexDirection: 'row', alignItems: 'center', marginBottom: 14 },
+  calendarPickerBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', borderRadius: 14, paddingHorizontal: 14, height: 44, borderWidth: 1, borderColor: '#CBD5E0', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.02, shadowRadius: 3, elevation: 1 },
+  calendarPickerBtnText: { fontSize: 13, color: '#718096', fontWeight: '600' },
+  calendarPickerSelectedText: { color: '#007AFF', fontWeight: '800' },
+  clearDateFilterBtn: { marginLeft: 8, padding: 4 },
+  calendarModalCard: { width: '100%', maxWidth: 350, backgroundColor: '#FFFFFF', borderRadius: 24, padding: 18, borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.25, shadowRadius: 15, elevation: 10 },
+  calendarHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  calNavBtn: { padding: 6, backgroundColor: '#EDF2F7', borderRadius: 10 },
+  calMonthTitle: { fontSize: 15, fontWeight: '800', color: '#1A202C' },
+  weekDaysRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
+  weekDayText: { width: '14.28%', textAlign: 'center', fontSize: 11, fontWeight: '800', color: '#A0AEC0' },
+  daysGrid: { flexDirection: 'row', flexWrap: 'wrap', width: '100%' },
+  dayCell: { width: '14.28%', height: 40, justifyContent: 'center', alignItems: 'center', marginVertical: 2, borderRadius: 10 },
+  dayCellText: { fontSize: 13, fontWeight: '700', color: '#2D3748' },
+  selectedDayCell: { backgroundColor: '#007AFF' },
+  selectedDayCellText: { color: '#FFFFFF', fontWeight: '900' },
+  calModalFooterRow: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: 16, borderTopWidth: 1, borderTopColor: '#EDF2F7', paddingTop: 12 },
+  calResetBtn: { backgroundColor: '#FFF5F5', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10, marginRight: 8, borderWidth: 1, borderColor: '#FED7D7' },
+  calResetBtnText: { color: '#E53E3E', fontSize: 12, fontWeight: '700' },
+  calCloseBtn: { backgroundColor: '#EDF2F7', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 10 },
+  calCloseBtnText: { color: '#4A5568', fontSize: 12, fontWeight: '700' },
   dayGroupCardWrapper: { marginBottom: 10 },
   dayGroupCard: { backgroundColor: '#FFFFFF', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.01, shadowRadius: 4, elevation: 1 },
   dayGroupCardExpanded: { borderBottomLeftRadius: 0, borderBottomRightRadius: 0, borderBottomWidth: 0, borderColor: '#CBD5E0', shadowOpacity: 0, elevation: 0 },
   dayGroupCardAbsent: { backgroundColor: '#FFF5F5', borderColor: '#FED7D7' },
-  
   dayHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', borderBottomWidth: 1, borderBottomColor: '#EDF2F7', paddingBottom: 10, marginBottom: 12 },
   dayText: { fontSize: 14, fontWeight: '800', color: '#007AFF' },
   dateText: { fontSize: 12, fontWeight: '600', color: '#A0AEC0', marginTop: 1 },
   photoLoggedBadge: { backgroundColor: '#EBF4FF', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, borderWidth: 1, borderColor: '#BEE3F8', flexDirection: 'row', alignItems: 'center' },
   photoLoggedBadgeText: { color: '#007AFF', fontSize: 10, fontWeight: '700' },
-  
   punchRow: { flexDirection: 'row', justifyContent: 'space-between', width: '100%' },
   punchItem: { width: '31.5%', backgroundColor: '#F7FAFC', padding: 8, borderRadius: 10, borderWidth: 1, borderColor: '#E2E8F0', alignItems: 'center' },
   punchItemAbsent: { backgroundColor: '#FFF5F5', borderColor: '#FED7D7' },
   punchLabel: { fontSize: 9, fontWeight: '800', color: '#A0AEC0', marginBottom: 4 },
   punchTime: { fontSize: 12, fontWeight: '800' },
-  
   loginColor: { color: '#38A169' },
   logoutColor: { color: '#4A5568' },
   absentColor: { color: '#E53E3E' },
   emptyColor: { color: '#A0AEC0', fontWeight: '400' },
   expandTipText: { fontSize: 10, color: '#A0AEC0', fontWeight: '600', textAlign: 'center', marginTop: 10, letterSpacing: 0.1 },
-  
   photoDrawerContainer: { backgroundColor: '#F8FAFC', borderBottomLeftRadius: 16, borderBottomRightRadius: 16, borderWidth: 1, borderColor: '#CBD5E0', padding: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.01, shadowRadius: 4, elevation: 1 },
   drawerLabelTitle: { fontSize: 11, fontWeight: '800', color: '#718096', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 10 },
   photoGridRow: { flexDirection: 'row', justifyContent: 'space-between', width: '100%' },
   photoBlock: { width: '48%' },
   photoGridLabel: { fontSize: 10, fontWeight: '700', color: '#718096', marginBottom: 4 },
-  
   imageOverlayWrapper: { position: 'relative', overflow: 'hidden', borderRadius: 12 },
   drawerSelfiePreviewImage: { width: '100%', height: 140, backgroundColor: '#EDF2F7', resizeMode: 'cover' },
-  
   thumbnailGeotagStamp: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(0, 0, 0, 0.8)', paddingVertical: 4, paddingHorizontal: 6, flexDirection: 'row', alignItems: 'center' },
   thumbnailGeotagText: { color: '#FFFFFF', fontSize: 8, fontWeight: '700', flex: 1 },
-
   noImageDashedPlaceholder: { width: '100%', paddingVertical: 36, backgroundColor: '#FFFFFF', borderRadius: 10, borderWidth: 1, borderStyle: 'dashed', borderColor: '#CBD5E0', justifyContent: 'center', alignItems: 'center' },
   noImagePlaceholderText: { color: '#A0AEC0', fontSize: 11, fontWeight: '600', fontStyle: 'italic' },
-  
   emptyContainer: { flex: 0.8, justifyContent: 'center', alignItems: 'center', minHeight: 300 },
   emptyIconCircle: { width: 54, height: 54, borderRadius: 27, backgroundColor: '#EDF2F7', justifyContent: 'center', alignItems: 'center', marginBottom: 10 },
   emptyText: { color: '#718096', fontSize: 14, fontWeight: '600' },
-
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', alignItems: 'center', padding: 16 },
   modalCardContainer: { width: '100%', maxWidth: 360, alignItems: 'center', position: 'relative' },
   modalCloseButton: { position: 'absolute', top: -45, right: 0, zIndex: 10 },
-  
   geotagPhotoFrame: { width: '100%', height: 460, borderRadius: 20, overflow: 'hidden', position: 'relative', backgroundColor: '#000', borderWidth: 2, borderColor: '#FFFFFF' },
   modalFullImage: { width: '100%', height: '100%', resizeMode: 'cover' },
-
-  geotagStampOverlay: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: 'rgba(18, 18, 18, 0.88)',
-    padding: 12,
-  },
+  geotagStampOverlay: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(18, 18, 18, 0.88)', padding: 12 },
   geotagStampHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
   geotagStampTitle: { color: '#FFD700', fontSize: 10, fontWeight: '900', marginLeft: 5, letterSpacing: 0.8 },
   geotagStampAddress: { color: '#FFFFFF', fontSize: 10, fontWeight: '600', lineHeight: 14, marginBottom: 8 },

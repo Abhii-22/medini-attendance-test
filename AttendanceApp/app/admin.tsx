@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert, Linking, ActivityIndicator } from 'react-native';
+import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert, Linking, ActivityIndicator, Modal, Image } from 'react-native';
 import { useAuth, API_BASE_URL } from './_layout';
-import { Ionicons, FontAwesome5, MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 
 interface EmployeeProfile {
   _id: string;
@@ -10,7 +10,8 @@ interface EmployeeProfile {
   designation: string;
   email: string;
   password?: string;
-  role?: string[]; // Defined explicitly as an array of strings
+  lunchBreakMinutes?: number;
+  role?: string[];
 }
 
 interface AttendanceRecord {
@@ -39,40 +40,77 @@ export default function AdminScreen() {
   const [attendanceLogs, setAttendanceLogs] = useState<AttendanceRecord[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
+  const [empSearchQuery, setEmpSearchQuery] = useState<string>('');
+  const [logSearchQuery, setLogSearchQuery] = useState<string>('');
+
   const [empName, setEmpName] = useState('');
   const [empIdCode, setEmpIdCode] = useState('');
   const [empDesignation, setEmpDesignation] = useState('');
   const [empEmail, setEmpEmail] = useState('');
   const [empPassword, setEmpPassword] = useState('');
+  
+  const [selectedLunchHours, setSelectedLunchHours] = useState<number>(0);
+  const [selectedLunchMins, setSelectedLunchMins] = useState<number>(0);
+  const [showHoursDropdown, setShowHoursDropdown] = useState<boolean>(false);
+  const [showMinsDropdown, setShowMinsDropdown] = useState<boolean>(false);
+
+  const [showEmpPassword, setShowEmpPassword] = useState<boolean>(false);
 
   const [adminName, setAdminName] = useState('');
   const [adminIdCode, setAdminIdCode] = useState('');
   const [adminDesignation, setAdminDesignation] = useState('');
   const [adminEmail, setAdminEmail] = useState('');
   const [adminPassword, setAdminPassword] = useState('');
+  const [showAdminPassword, setShowAdminPassword] = useState<boolean>(false);
 
   const availableMonths = [
     'January', 'February', 'March', 'April', 'May', 'June', 
     'July', 'August', 'September', 'October', 'November', 'December'
   ];
 
-  const calculateWorkingHours = (inTime: string, outTime: string) => {
+  const hoursList = Array.from({ length: 13 }, (_, i) => i);
+  const minutesList = Array.from({ length: 60 }, (_, i) => i);
+
+  const calculateWorkingHours = (inTime: string, outTime: string, employeeNameTarget?: string, employeeIdTarget?: string) => {
     if (!inTime || !outTime || inTime === '--:--' || outTime === '--:--' || inTime === 'ABSENT' || outTime === 'ABSENT') {
       return '--';
     }
     try {
       const parseTimeToMinutes = (timeStr: string) => {
-        const [time, modifier] = timeStr.split(' ');
-        let [hours, minutes] = time.split(':').map(Number);
-        if (modifier === 'PM' && hours < 12) hours += 12;
-        if (modifier === 'AM' && hours === 12) hours = 0;
+        const cleanTime = timeStr.trim().toUpperCase();
+        const isPM = cleanTime.includes('PM');
+        const isAM = cleanTime.includes('AM');
+        
+        const timeOnly = cleanTime.replace(/(AM|PM)/g, '').trim();
+        const parts = timeOnly.split(/[:\.]/).map(Number);
+        
+        let hours = parts[0] || 0;
+        const minutes = parts[1] || 0;
+
+        if (isPM && hours < 12) hours += 12;
+        if (isAM && hours === 12) hours = 0;
+
         return hours * 60 + minutes;
       };
 
-      const diffInMinutes = parseTimeToMinutes(outTime) - parseTimeToMinutes(inTime);
-      if (diffInMinutes <= 0) return '0h 0m';
+      const inMins = parseTimeToMinutes(inTime);
+      const outMins = parseTimeToMinutes(outTime);
 
-      return `${Math.floor(diffInMinutes / 60)}h ${diffInMinutes % 60}m`;
+      const grossMinutes = outMins - inMins;
+      if (grossMinutes <= 0) return '0h 0m';
+
+      const matchedEmp = employees.find(e => 
+        (employeeIdTarget && e.employeeId?.toLowerCase().trim() === employeeIdTarget?.toLowerCase().trim()) ||
+        (employeeNameTarget && e.name?.toLowerCase().trim() === employeeNameTarget?.toLowerCase().trim())
+      );
+
+      const lunchDeduction = matchedEmp?.lunchBreakMinutes !== undefined 
+        ? Number(matchedEmp.lunchBreakMinutes) 
+        : 0;
+
+      const netMinutes = grossMinutes >= lunchDeduction ? grossMinutes - lunchDeduction : 0;
+
+      return `${Math.floor(netMinutes / 60)}h ${netMinutes % 60}m`;
     } catch (e) {
       return '--';
     }
@@ -106,9 +144,8 @@ export default function AdminScreen() {
   };
 
   useEffect(() => {
-    if (activeTab === 'REGISTER') {
-      fetchEmployeesList();
-    } else {
+    fetchEmployeesList();
+    if (activeTab === 'LOGS') {
       fetchAttendanceLogs(selectedEmpFilter);
     }
   }, [activeTab, selectedEmpFilter]);
@@ -126,38 +163,96 @@ export default function AdminScreen() {
 
   const filteredLogs = getFilteredLogs();
 
+  const searchedEmployees = employees.filter((emp) => {
+    if (!empSearchQuery.trim()) return true;
+    const q = empSearchQuery.toLowerCase().trim();
+    return (
+      emp.name?.toLowerCase().includes(q) ||
+      emp.employeeId?.toLowerCase().includes(q) ||
+      emp.designation?.toLowerCase().includes(q) ||
+      emp.email?.toLowerCase().includes(q)
+    );
+  });
+
+  const filteredWorkforceEmployees = employees.filter(e => {
+    const r: string[] = Array.isArray(e.role) ? e.role : [e.role || 'EMPLOYEE'];
+    if (r.includes('ADMIN_VIEW')) return false;
+
+    if (!logSearchQuery.trim()) return true;
+    const q = logSearchQuery.toLowerCase().trim();
+    return (
+      e.name?.toLowerCase().includes(q) ||
+      e.employeeId?.toLowerCase().includes(q)
+    );
+  });
+
+  const searchedLogs = filteredLogs.filter((log) => {
+    if (!logSearchQuery.trim()) return true;
+    const q = logSearchQuery.toLowerCase().trim();
+    return (
+      log.employeeName?.toLowerCase().includes(q) ||
+      log.employeeIdReference?.toLowerCase().includes(q) ||
+      log.date?.toLowerCase().includes(q) ||
+      log.loginTime?.toLowerCase().includes(q) ||
+      log.logoutTime?.toLowerCase().includes(q)
+    );
+  });
+
+  const handleLogSearchChange = (text: string) => {
+    setLogSearchQuery(text);
+    if (!text.trim()) {
+      setSelectedEmpFilter('ALL');
+      return;
+    }
+    const matchingEmp = employees.find(
+      (e) => e.name.toLowerCase().trim() === text.toLowerCase().trim()
+    );
+    if (matchingEmp) {
+      setSelectedEmpFilter(matchingEmp.name);
+    }
+  };
+
   const handleCreateEmployeeSubmit = async () => {
-    if (!empName || !empIdCode || !empDesignation || !empEmail || !empPassword) {
-      Alert.alert('Missing Fields', 'Please fill out all fields inside the Employee form.');
+    if (!empName || !empIdCode || !empDesignation || !empEmail || (!isEditing && !empPassword)) {
+      Alert.alert('Missing Fields', 'Please fill out all required fields inside the Employee form.');
       return;
     }
 
-    const payload = {
+    const calculatedTotalLunchMinutes = (Number(selectedLunchHours) * 60) + Number(selectedLunchMins);
+
+    const payload: any = {
       name: empName.trim(),
       employeeId: empIdCode.trim().toUpperCase(),
       designation: empDesignation.trim(),
       email: empEmail.trim().toLowerCase(),
-      password: empPassword,
+      lunchBreakMinutes: isNaN(calculatedTotalLunchMinutes) ? 0 : calculatedTotalLunchMinutes,
       role: 'EMPLOYEE'
     };
+
+    if (empPassword) {
+      payload.password = empPassword;
+    }
 
     executeServerProvisioning(payload, empName.trim());
   };
 
   const handleCreateAdminViewSubmit = async () => {
-    if (!adminName || !adminIdCode || !adminDesignation || !adminEmail || !adminPassword) {
+    if (!adminName || !adminIdCode || !adminDesignation || !adminEmail || (!isEditing && !adminPassword)) {
       Alert.alert('Missing Fields', 'Please fill out all fields inside the Admin View Supervisor form.');
       return;
     }
 
-    const payload = {
+    const payload: any = {
       name: adminName.trim(),
       employeeId: adminIdCode.trim().toUpperCase(),
       designation: adminDesignation.trim(),
       email: adminEmail.trim().toLowerCase(),
-      password: adminPassword,
       role: 'ADMIN_VIEW'
     };
+
+    if (adminPassword) {
+      payload.password = adminPassword;
+    }
 
     executeServerProvisioning(payload, adminName.trim());
   };
@@ -183,7 +278,7 @@ export default function AdminScreen() {
 
       const result = await response.json();
 
-      if (response.ok && (result.success || result._id)) {
+      if (response.ok && (result.success || result._id || result.employee)) {
         Alert.alert('Success 🎉', isEditing ? 'Account profile updated.' : `Credentials deployed for ${targetedName}.`);
         clearAllFormStates();
         fetchEmployeesList();
@@ -202,7 +297,6 @@ export default function AdminScreen() {
     setIsEditing(true);
     setEditingTargetId(item._id);
 
-    // 👑 FIXED TS(2345): Explicitly fallback to string array parsing safely
     const roles: string[] = Array.isArray(item.role) ? item.role : [item.role || 'EMPLOYEE'];
 
     if (roles.includes('ADMIN_VIEW')) {
@@ -217,6 +311,10 @@ export default function AdminScreen() {
       setEmpDesignation(item.designation);
       setEmpEmail(item.email);
       setEmpPassword(item.password || '');
+      
+      const totalMins = item.lunchBreakMinutes !== undefined ? Number(item.lunchBreakMinutes) : 0;
+      setSelectedLunchHours(Math.floor(totalMins / 60));
+      setSelectedLunchMins(totalMins % 60);
     }
   };
 
@@ -249,8 +347,11 @@ export default function AdminScreen() {
   const clearAllFormStates = () => {
     setIsEditing(false);
     setEditingTargetId(null);
-    setEmpName(''); setEmpIdCode(''); setEmpDesignation(''); setEmpEmail(''); setEmpPassword('');
+    setEmpName(''); setEmpIdCode(''); setEmpDesignation(''); setEmpEmail(''); setEmpPassword(''); 
+    setSelectedLunchHours(0); setSelectedLunchMins(0); 
+    setShowEmpPassword(false);
     setAdminName(''); setAdminIdCode(''); setAdminDesignation(''); setAdminEmail(''); setAdminPassword('');
+    setShowAdminPassword(false);
   };
 
   const handleDownloadReport = () => {
@@ -263,11 +364,19 @@ export default function AdminScreen() {
 
   return (
     <View style={styles.container}>
-      {/* BANNER HEADER */}
       <View style={styles.headerHeroCard}>
-        <View style={styles.headerInfoBlock}>
-          <Text style={styles.headerSubtitle}>MASTER MANAGEMENT HUB</Text>
-          <Text style={styles.headerTitle}>System Administrator</Text>
+        <View style={styles.headerBrandBlock}>
+          <View style={styles.logoBadgeFrame}>
+            <Image 
+              source={require('../assets/images/medini new logo.jpeg')} 
+              style={styles.mediniLogoImage} 
+              resizeMode="contain"
+            />
+          </View>
+          <View style={styles.headerInfoBlock}>
+            <Text style={styles.headerSubtitle}>MASTER MANAGEMENT HUB</Text>
+            <Text style={styles.headerTitle}>System Administrator</Text>
+          </View>
         </View>
         <TouchableOpacity style={styles.exitBadgeBtn} activeOpacity={0.7} onPress={() => logout()}>
           <Ionicons name="log-out-outline" size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
@@ -275,7 +384,6 @@ export default function AdminScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* METRIC BADGES */}
       <View style={styles.summaryGridContainer}>
         <View style={[styles.statBoxSummary, { borderLeftColor: '#007AFF' }]}>
           <Text style={styles.statBoxNumber}>
@@ -289,7 +397,6 @@ export default function AdminScreen() {
         <View style={[styles.statBoxSummary, { borderLeftColor: '#805AD5' }]}>
           <Text style={styles.statBoxNumber}>
             {employees.filter(e => {
-              // 👑 FIXED TS(7022)/TS(2448): Removed recursive variable self-assignment loop
               const r: string[] = Array.isArray(e.role) ? e.role : [e.role || 'EMPLOYEE'];
               return r.includes('ADMIN_VIEW');
             }).length}
@@ -298,7 +405,6 @@ export default function AdminScreen() {
         </View>
       </View>
 
-      {/* STRIP TABS */}
       <View style={styles.menuToggleRow}>
         <TouchableOpacity style={[styles.menuTab, activeTab === 'REGISTER' && styles.activeMenuTab]} onPress={() => { setActiveTab('REGISTER'); clearAllFormStates(); }}>
           <Ionicons name="person-add-outline" size={14} color={activeTab === 'REGISTER' ? '#007AFF' : '#718096'} style={{ marginRight: 6 }} />
@@ -313,7 +419,6 @@ export default function AdminScreen() {
       {activeTab === 'REGISTER' && (
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
           
-          {/* 👤 FORM 1: STANDARD EMPLOYEE */}
           {(!isEditing || (isEditing && !employees.find(e => e._id === editingTargetId)?.role?.includes('ADMIN_VIEW'))) && (
             <View style={styles.formCard}>
               <View style={styles.cardHeaderRow}>
@@ -340,8 +445,59 @@ export default function AdminScreen() {
               <Text style={styles.inputLabel}>Official Email Address</Text>
               <TextInput style={styles.input} value={empEmail} onChangeText={setEmpEmail} placeholder="worker@medini.com" placeholderTextColor="#A0AEC0" keyboardType="email-address" autoCapitalize="none" />
 
-              <Text style={styles.inputLabel}>Access Password</Text>
-              <TextInput style={styles.input} value={empPassword} onChangeText={setEmpPassword} placeholder="••••••••" placeholderTextColor="#A0AEC0" secureTextEntry autoCapitalize="none" />
+              <Text style={styles.inputLabel}>Set Fixed Lunch Break Duration</Text>
+              <View style={styles.dropdownPickerRow}>
+                
+                <View style={{ width: '48%' }}>
+                  <Text style={styles.subInputLabel}>Hours (0 - 12)</Text>
+                  <TouchableOpacity 
+                    style={styles.dropdownTriggerBtn} 
+                    onPress={() => setShowHoursDropdown(true)}
+                  >
+                    <Text style={styles.dropdownValueText}>{selectedLunchHours} {selectedLunchHours === 1 ? 'Hour' : 'Hours'}</Text>
+                    <Ionicons name="chevron-down" size={16} color="#718096" />
+                  </TouchableOpacity>
+                </View>
+
+                <View style={{ width: '48%' }}>
+                  <Text style={styles.subInputLabel}>Minutes (0 - 59)</Text>
+                  <TouchableOpacity 
+                    style={styles.dropdownTriggerBtn} 
+                    onPress={() => setShowMinsDropdown(true)}
+                  >
+                    <Text style={styles.dropdownValueText}>{selectedLunchMins} Mins</Text>
+                    <Ionicons name="chevron-down" size={16} color="#718096" />
+                  </TouchableOpacity>
+                </View>
+
+              </View>
+
+              <Text style={styles.lunchSummaryNote}>
+                Total Deduction: {selectedLunchHours > 0 ? `${selectedLunchHours}h ` : ''}{selectedLunchMins}m per shift
+              </Text>
+
+              <Text style={styles.inputLabel}>Access Password {isEditing ? '(Optional)' : ''}</Text>
+              <View style={styles.passwordInputContainer}>
+                <TextInput
+                  style={styles.passwordInput}
+                  value={empPassword}
+                  onChangeText={setEmpPassword}
+                  placeholder={isEditing ? 'Leave blank to keep unchanged' : '••••••••'}
+                  placeholderTextColor="#A0AEC0"
+                  secureTextEntry={!showEmpPassword}
+                  autoCapitalize="none"
+                />
+                <TouchableOpacity
+                  style={styles.eyeIconBtn}
+                  onPress={() => setShowEmpPassword(!showEmpPassword)}
+                >
+                  <Ionicons
+                    name={showEmpPassword ? 'eye-off-outline' : 'eye-outline'}
+                    size={20}
+                    color="#718096"
+                  />
+                </TouchableOpacity>
+              </View>
 
               <View style={styles.formActionBtnGroup}>
                 <TouchableOpacity style={[styles.submitButton, { flex: 1 }]} onPress={handleCreateEmployeeSubmit}>
@@ -357,7 +513,6 @@ export default function AdminScreen() {
             </View>
           )}
 
-          {/* 👁️ FORM 2: ADMIN VIEW SUPERVISOR */}
           {(!isEditing || (isEditing && employees.find(e => e._id === editingTargetId)?.role?.includes('ADMIN_VIEW'))) && (
             <View style={[styles.formCard, { borderTopColor: '#805AD5', borderTopWidth: 4 }]}>
               <View style={styles.cardHeaderRow}>
@@ -384,8 +539,28 @@ export default function AdminScreen() {
               <Text style={styles.inputLabel}>Supervisor Login Email</Text>
               <TextInput style={styles.input} value={adminEmail} onChangeText={setAdminEmail} placeholder="supervisor@medini.com" placeholderTextColor="#A0AEC0" keyboardType="email-address" autoCapitalize="none" />
 
-              <Text style={styles.inputLabel}>Admin Access Password</Text>
-              <TextInput style={styles.input} value={adminPassword} onChangeText={setAdminPassword} placeholder="••••••••" placeholderTextColor="#A0AEC0" secureTextEntry autoCapitalize="none" />
+              <Text style={styles.inputLabel}>Admin Access Password {isEditing ? '(Optional)' : ''}</Text>
+              <View style={styles.passwordInputContainer}>
+                <TextInput
+                  style={styles.passwordInput}
+                  value={adminPassword}
+                  onChangeText={setAdminPassword}
+                  placeholder={isEditing ? 'Leave blank to keep unchanged' : '••••••••'}
+                  placeholderTextColor="#A0AEC0"
+                  secureTextEntry={!showAdminPassword}
+                  autoCapitalize="none"
+                />
+                <TouchableOpacity
+                  style={styles.eyeIconBtn}
+                  onPress={() => setShowAdminPassword(!showAdminPassword)}
+                >
+                  <Ionicons
+                    name={showAdminPassword ? 'eye-off-outline' : 'eye-outline'}
+                    size={20}
+                    color="#718096"
+                  />
+                </TouchableOpacity>
+              </View>
 
               <View style={styles.formActionBtnGroup}>
                 <TouchableOpacity style={[styles.submitButton, { backgroundColor: '#805AD5', flex: 1 }]} onPress={handleCreateAdminViewSubmit}>
@@ -401,17 +576,34 @@ export default function AdminScreen() {
             </View>
           )}
 
-          {/* ACTIVE REGISTRY DIRECTORY LIST */}
           <View style={styles.sectionHeaderRowInline}>
             <Ionicons name="folder-open-outline" size={15} color="#2B6CB0" />
             <Text style={styles.sectionHeadingLabelInline}>System Master Accounts Directory</Text>
           </View>
+
+          <View style={styles.searchBarContainer}>
+            <Ionicons name="search-outline" size={16} color="#718096" style={{ marginRight: 8 }} />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search by name, ID, designation, or email..."
+              placeholderTextColor="#A0AEC0"
+              value={empSearchQuery}
+              onChangeText={setEmpSearchQuery}
+            />
+            {empSearchQuery.length > 0 && (
+              <TouchableOpacity onPress={() => setEmpSearchQuery('')}>
+                <Ionicons name="close-circle" size={18} color="#A0AEC0" />
+              </TouchableOpacity>
+            )}
+          </View>
+
           <View style={styles.directoryCard}>
-            {employees.length === 0 ? (
-              <Text style={styles.emptyTextSub}>No active profiles connected inside database container.</Text>
+            {searchedEmployees.length === 0 ? (
+              <Text style={styles.emptyTextSub}>
+                {empSearchQuery ? `No profiles found matching "${empSearchQuery}".` : 'No active profiles connected inside database container.'}
+              </Text>
             ) : (
-              employees.map((item) => {
-                // 👑 FIXED TS(2345): Ensured typed array fallback here as well
+              searchedEmployees.map((item) => {
                 const roles: string[] = Array.isArray(item.role) ? item.role : [item.role || 'EMPLOYEE'];
                 const isAdminView = roles.includes('ADMIN_VIEW');
                 return (
@@ -425,7 +617,10 @@ export default function AdminScreen() {
                     </View>
                     <View style={styles.employeeInfoBox}>
                       <Text style={styles.empRowName}>{item.name} <Text style={styles.empRowId}>({item.employeeId})</Text></Text>
-                      <Text style={styles.empRowSub}>{item.designation}  •  <Text style={{ fontWeight: '800' }}>{isAdminView ? 'ADMIN_VIEW' : 'EMPLOYEE'}</Text></Text>
+                      <Text style={styles.empRowSub}>
+                        {item.designation}  •  <Text style={{ fontWeight: '800' }}>{isAdminView ? 'ADMIN_VIEW' : 'EMPLOYEE'}</Text>
+                        {item.lunchBreakMinutes !== undefined && item.lunchBreakMinutes > 0 ? ` • ${item.lunchBreakMinutes}m Lunch` : ''}
+                      </Text>
                     </View>
                     <View style={styles.crudActionRow}>
                       <TouchableOpacity style={styles.actionPillEdit} onPress={() => handleSelectEditEmployee(item)}>
@@ -445,21 +640,41 @@ export default function AdminScreen() {
 
       {activeTab === 'LOGS' && (
         <View style={{ flex: 1 }}>
-          {/* LOGS WORKSPACE BLOCK */}
           <View style={styles.sectionHeaderRowInline}>
             <Ionicons name="filter" size={14} color="#2B6CB0" />
             <Text style={styles.sectionHeadingLabelInline}>Workforce Filtering Focus</Text>
           </View>
+
+          <View style={styles.searchBarContainer}>
+            <Ionicons name="search-outline" size={16} color="#718096" style={{ marginRight: 8 }} />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search workforce by employee name or ID..."
+              placeholderTextColor="#A0AEC0"
+              value={logSearchQuery}
+              onChangeText={handleLogSearchChange}
+            />
+            {logSearchQuery.length > 0 && (
+              <TouchableOpacity onPress={() => handleLogSearchChange('')}>
+                <Ionicons name="close-circle" size={18} color="#A0AEC0" />
+              </TouchableOpacity>
+            )}
+          </View>
+
           <View style={styles.pillScrollFrame}>
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              <TouchableOpacity style={[styles.filterPill, selectedEmpFilter === 'ALL' && styles.activeFilterPill]} onPress={() => setSelectedEmpFilter('ALL')}>
+              <TouchableOpacity 
+                style={[styles.filterPill, selectedEmpFilter === 'ALL' && styles.activeFilterPill]} 
+                onPress={() => { setSelectedEmpFilter('ALL'); setLogSearchQuery(''); }}
+              >
                 <Text style={[styles.filterPillText, selectedEmpFilter === 'ALL' && styles.activeFilterPillText]}>🌐 Global Workforce</Text>
               </TouchableOpacity>
-              {employees.filter(e => {
-                const r: string[] = Array.isArray(e.role) ? e.role : [e.role || 'EMPLOYEE'];
-                return !r.includes('ADMIN_VIEW');
-              }).map((emp) => (
-                <TouchableOpacity key={emp._id} style={[styles.filterPill, selectedEmpFilter === emp.name && styles.activeFilterPill]} onPress={() => setSelectedEmpFilter(emp.name)}>
+              {filteredWorkforceEmployees.map((emp) => (
+                <TouchableOpacity 
+                  key={emp._id} 
+                  style={[styles.filterPill, selectedEmpFilter === emp.name && styles.activeFilterPill]} 
+                  onPress={() => { setSelectedEmpFilter(emp.name); setLogSearchQuery(emp.name); }}
+                >
                   <Text style={[styles.filterPillText, selectedEmpFilter === emp.name && styles.activeFilterPillText]}>👤 {emp.name}</Text>
                 </TouchableOpacity>
               ))}
@@ -470,7 +685,7 @@ export default function AdminScreen() {
             <Ionicons name="calendar-outline" size={14} color="#2B6CB0" />
             <Text style={styles.sectionHeadingLabelInline}>Select Active Tracking Month ({new Date().getFullYear()})</Text>
           </View>
-          <View style={[styles.pillScrollFrame, { marginBottom: 15 }]}>
+          <View style={[styles.pillScrollFrame, { marginBottom: 12 }]}>
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
               {availableMonths.map((month) => (
                 <TouchableOpacity key={month} style={[styles.monthFilterPill, selectedMonthFilter === month && styles.activeMonthFilterPill]} onPress={() => setSelectedMonthFilter(month)}>
@@ -496,13 +711,15 @@ export default function AdminScreen() {
                 <ActivityIndicator size="large" color="#007AFF" />
                 <Text style={styles.loaderLabelSub}>Compiling cloud shift registers...</Text>
               </View>
-            ) : filteredLogs.length === 0 ? (
+            ) : searchedLogs.length === 0 ? (
               <View style={styles.emptyCardFrame}>
                 <MaterialCommunityIcons name="folder-alert-outline" size={24} color="#A0AEC0" style={{ marginBottom: 6 }} />
-                <Text style={styles.emptyTextMessage}>No logs recorded inside {selectedMonthFilter} {new Date().getFullYear()} for this item selection.</Text>
+                <Text style={styles.emptyTextMessage}>
+                  {logSearchQuery ? `No logs found matching "${logSearchQuery}".` : `No logs recorded inside ${selectedMonthFilter} ${new Date().getFullYear()} for this item selection.`}
+                </Text>
               </View>
             ) : (
-              filteredLogs.map((logItem) => {
+              searchedLogs.map((logItem) => {
                 const isAbsent = logItem.loginTime === 'ABSENT' || logItem.logoutTime === 'ABSENT';
                 return (
                   <View key={logItem._id} style={[styles.dataLogCard, isAbsent && styles.dataLogCardAbsent]}>
@@ -519,7 +736,7 @@ export default function AdminScreen() {
                       <View style={[styles.metricBox, { backgroundColor: '#F0FDF4', borderColor: '#DCFCE7' }]}>
                         <Text style={[styles.metricLabel, { color: '#16A34A' }]}>HOURS WORKED</Text>
                         <Text style={[styles.metricTime, { color: '#15803D' }]}>
-                          {calculateWorkingHours(logItem.loginTime, logItem.logoutTime)}
+                          {calculateWorkingHours(logItem.loginTime, logItem.logoutTime, logItem.employeeName, logItem.employeeIdReference)}
                         </Text>
                       </View>
                       <View style={[styles.metricBox, isAbsent && { borderColor: '#FEB2B2', backgroundColor: '#FFF5F5' }]}>
@@ -538,17 +755,81 @@ export default function AdminScreen() {
           </ScrollView>
         </View>
       )}
+
+      <Modal
+        visible={showHoursDropdown}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowHoursDropdown(false)}
+      >
+        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowHoursDropdown(false)}>
+          <View style={styles.dropdownModalCard}>
+            <Text style={styles.dropdownModalTitle}>Select Lunch Break Hours</Text>
+            <ScrollView style={{ maxHeight: 250 }}>
+              {hoursList.map(h => (
+                <TouchableOpacity
+                  key={h}
+                  style={[styles.dropdownItem, selectedLunchHours === h && styles.activeDropdownItem]}
+                  onPress={() => {
+                    setSelectedLunchHours(h);
+                    setShowHoursDropdown(false);
+                  }}
+                >
+                  <Text style={[styles.dropdownItemText, selectedLunchHours === h && styles.activeDropdownItemText]}>
+                    {h} {h === 1 ? 'Hour' : 'Hours'}
+                  </Text>
+                  {selectedLunchHours === h && <Ionicons name="checkmark" size={16} color="#007AFF" />}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      <Modal
+        visible={showMinsDropdown}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowMinsDropdown(false)}
+      >
+        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowMinsDropdown(false)}>
+          <View style={styles.dropdownModalCard}>
+            <Text style={styles.dropdownModalTitle}>Select Lunch Break Minutes</Text>
+            <ScrollView style={{ maxHeight: 250 }}>
+              {minutesList.map(m => (
+                <TouchableOpacity
+                  key={m}
+                  style={[styles.dropdownItem, selectedLunchMins === m && styles.activeDropdownItem]}
+                  onPress={() => {
+                    setSelectedLunchMins(m);
+                    setShowMinsDropdown(false);
+                  }}
+                >
+                  <Text style={[styles.dropdownItemText, selectedLunchMins === m && styles.activeDropdownItemText]}>
+                    {m} {m === 1 ? 'Minute' : 'Minutes'}
+                  </Text>
+                  {selectedLunchMins === m && <Ionicons name="checkmark" size={16} color="#007AFF" />}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8FAFC', paddingHorizontal: 16, paddingTop: 50 },
-  headerHeroCard: { backgroundColor: '#1A202C', padding: 20, borderRadius: 20, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
-  headerInfoBlock: { flex: 1 },
+  headerHeroCard: { backgroundColor: '#1A202C', padding: 16, borderRadius: 22, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+  headerBrandBlock: { flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 },
+  logoBadgeFrame: { width: 62, height: 62, borderRadius: 14, backgroundColor: '#FFFFFF', padding: 4, justifyContent: 'center', alignItems: 'center', marginRight: 12, borderWidth: 1, borderColor: '#E2E8F0', overflow: 'hidden' },
+  mediniLogoImage: { width: '100%', height: '100%' },
+  headerInfoBlock: { flex: 1, justifyContent: 'center' },
   headerSubtitle: { color: '#A0AEC0', fontSize: 10, fontWeight: '800', letterSpacing: 0.8 },
-  headerTitle: { color: '#FFFFFF', fontSize: 20, fontWeight: '800', marginTop: 2 },
-  exitBadgeBtn: { backgroundColor: '#E53E3E', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, flexDirection: 'row', alignItems: 'center' },
+  headerTitle: { color: '#FFFFFF', fontSize: 17, fontWeight: '800', marginTop: 2 },
+  exitBadgeBtn: { backgroundColor: '#E53E3E', paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10, flexDirection: 'row', alignItems: 'center', flexShrink: 0 },
   exitBtnText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' },
   summaryGridContainer: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginBottom: 16 },
   statBoxSummary: { width: '48.5%', borderRadius: 16, padding: 14, borderWidth: 1, backgroundColor: '#FFFFFF', borderColor: '#E2E8F0', borderLeftWidth: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.01, shadowRadius: 4, elevation: 1 },
@@ -565,7 +846,17 @@ const styles = StyleSheet.create({
   cardHeaderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
   sectionHeading: { fontSize: 13, fontWeight: '800', color: '#007AFF', textTransform: 'uppercase', letterSpacing: 0.5, marginLeft: 6 },
   inputLabel: { fontSize: 11, fontWeight: '700', color: '#718096', marginBottom: 5, marginTop: 10, textTransform: 'uppercase', letterSpacing: 0.3 },
+  subInputLabel: { fontSize: 10, fontWeight: '700', color: '#A0AEC0', marginBottom: 4, textTransform: 'uppercase' },
   input: { backgroundColor: '#F7FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 14, color: '#2D3748', marginBottom: 4 },
+  dropdownPickerRow: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginBottom: 4 },
+  dropdownTriggerBtn: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#F7FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12 },
+  dropdownValueText: { fontSize: 13, fontWeight: '700', color: '#2D3748' },
+  lunchSummaryNote: { fontSize: 11, color: '#007AFF', fontWeight: '800', marginTop: 4, marginBottom: 6 },
+  searchBarContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#CBD5E0', borderRadius: 12, paddingHorizontal: 12, height: 42, marginBottom: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.02, shadowRadius: 3, elevation: 1 },
+  searchInput: { flex: 1, fontSize: 13, color: '#2D3748', fontWeight: '600' },
+  passwordInputContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F7FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 12, marginBottom: 4 },
+  passwordInput: { flex: 1, paddingHorizontal: 14, paddingVertical: 12, fontSize: 14, color: '#2D3748' },
+  eyeIconBtn: { paddingHorizontal: 12, paddingVertical: 10 },
   inlineInputsRow: { flexDirection: 'row', justifyContent: 'space-between', width: '100%' },
   formActionBtnGroup: { flexDirection: 'row', marginTop: 15, width: '100%' },
   submitButton: { backgroundColor: '#007AFF', paddingVertical: 12, borderRadius: 12, alignItems: 'center', justifyContent: 'center', flexDirection: 'row' },
@@ -611,5 +902,12 @@ const styles = StyleSheet.create({
   loaderLabelSub: { color: '#718096', fontSize: 12, fontWeight: '600', marginTop: 12 },
   emptyCardFrame: { backgroundColor: '#FFFFFF', padding: 30, borderRadius: 16, alignItems: 'center', borderWidth: 1, borderColor: '#E2E8F0' },
   emptyTextMessage: { color: '#A0AEC0', fontSize: 12, fontStyle: 'italic', fontWeight: '600', textAlign: 'center', marginTop: 4 },
-  emptyTextSub: { color: '#A0AEC0', fontSize: 12, fontWeight: '600', textAlign: 'center', marginVertical: 15, fontStyle: 'italic' }
+  emptyTextSub: { color: '#A0AEC0', fontSize: 12, fontWeight: '600', textAlign: 'center', marginVertical: 15, fontStyle: 'italic' },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 20 },
+  dropdownModalCard: { width: '85%', maxWidth: 300, backgroundColor: '#FFFFFF', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: '#E2E8F0', elevation: 5 },
+  dropdownModalTitle: { fontSize: 13, fontWeight: '800', color: '#1A202C', marginBottom: 12, textTransform: 'uppercase', textAlign: 'center' },
+  dropdownItem: { paddingVertical: 12, paddingHorizontal: 16, borderBottomWidth: 1, borderBottomColor: '#EDF2F7', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  activeDropdownItem: { backgroundColor: '#EBF8FF' },
+  dropdownItemText: { fontSize: 13, color: '#4A5568', fontWeight: '600' },
+  activeDropdownItemText: { color: '#007AFF', fontWeight: '800' }
 });

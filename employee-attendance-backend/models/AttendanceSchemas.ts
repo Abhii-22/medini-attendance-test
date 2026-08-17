@@ -10,6 +10,7 @@ export interface IEmployeeProfile extends Document {
   email: string;
   password?: string;
   role: string[];
+  lunchBreakMinutes?: number; // 🍱 LUNCH BREAK MINUTES FIELD
 }
 
 export interface IAttendanceShiftLog extends Document {
@@ -21,8 +22,8 @@ export interface IAttendanceShiftLog extends Document {
   logoutTime: string;
   capturedPhotoInUri: string;
   capturedPhotoOutUri: string;
-  locationInAddress: string;   // 🚀 Stored Punch In Geo Address
-  locationOutAddress: string;  // 🚀 Stored Punch Out Geo Address
+  locationInAddress: string;   
+  locationOutAddress: string;  
 }
 
 export interface IAdminCredential extends Document {
@@ -35,7 +36,7 @@ export interface IAdminCredential extends Document {
 }
 
 // ----------------------------------------------------
-// 1. CORE EMPLOYEE REGISTRY SCHEMA WITH MULTI-ROLE ARRAY SUPPORT
+// 1. CORE EMPLOYEE REGISTRY SCHEMA
 // ----------------------------------------------------
 const EmployeeProfileSchema = new Schema<IEmployeeProfile>({
   name: { type: String, required: true },
@@ -43,7 +44,8 @@ const EmployeeProfileSchema = new Schema<IEmployeeProfile>({
   designation: { type: String, required: true },
   email: { type: String, required: true, unique: true, lowercase: true, trim: true },
   password: { type: String, required: true },
-  role: { type: [String], default: ['EMPLOYEE'] }
+  role: { type: [String], default: ['EMPLOYEE'] },
+  lunchBreakMinutes: { type: Number, default: 0 } // 🍱 MONGOOSE SCHEMA PROPERTY FOR LUNCH DURATION
 }, { timestamps: true });
 
 // ----------------------------------------------------
@@ -58,13 +60,12 @@ const ShiftLogSchema = new Schema<IAttendanceShiftLog>({
   logoutTime: { type: String, default: '--:--' },
   capturedPhotoInUri: { type: String, default: '' }, 
   capturedPhotoOutUri: { type: String, default: '' },
-  // 📌 GEOTAG ADDRESS STORAGE FIELDS
   locationInAddress: { type: String, default: '' },
   locationOutAddress: { type: String, default: '' }
 }, { timestamps: true });
 
 // ----------------------------------------------------
-// 3. SEPARATE INDEPENDENT MASTER ADMIN CREDENTIAL SCHEMA
+// 3. MASTER ADMIN CREDENTIAL SCHEMA
 // ----------------------------------------------------
 const AdminCredentialSchema = new Schema<IAdminCredential>({
   name: { type: String, required: true },
@@ -76,7 +77,7 @@ const AdminCredentialSchema = new Schema<IAdminCredential>({
 }, { timestamps: true });
 
 // ----------------------------------------------------
-// MODEL EXPORTS (CAST AS MODEL<INTERFACE> TO SOLVE TYPESCRIPT ERRORS)
+// MODEL EXPORTS
 // ----------------------------------------------------
 export const RegisteredEmployee = (mongoose.models.RegisteredEmployee || 
   mongoose.model<IEmployeeProfile>('RegisteredEmployee', EmployeeProfileSchema)) as Model<IEmployeeProfile>;

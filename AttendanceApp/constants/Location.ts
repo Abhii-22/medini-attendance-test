@@ -21,6 +21,48 @@ export const KALABURAGI_LOCATION_2 = {
   radiusInMeters: 50,
 };
 
+// 📌 Kalaburagi Branch 3 (Aiwan-E-Shahi Area, Shambhognlli)
+export const KALABURAGI_LOCATION_3 = {
+  latitude: 17.31464,
+  longitude: 76.83405,
+  radiusInMeters: 50,
+};
+
+// 📌 Cambridge Institute Of Technology (Krishnarajapuram, Bengaluru)
+export const CAMBRIDGE_IT_LOCATION = {
+  latitude: 13.012195,
+  longitude: 77.703683,
+  radiusInMeters: 50,
+};
+
+// 📌 Soladevanahalli Campus (Bengaluru)
+export const SOLADEVANAHALLI_LOCATION = {
+  latitude: 13.083725,
+  longitude: 77.484023,
+  radiusInMeters: 50,
+};
+
+// 📌 Bengaluru MG Road Branch (Shanthala Nagar)
+export const BENGALURU_MG_ROAD_LOCATION = {
+  latitude: 12.974233,
+  longitude: 77.608287,
+  radiusInMeters: 50,
+};
+
+// 📌 VCET Puttur Branch
+export const VCET_PUTTUR_LOCATION = {
+  latitude: 12.78172,
+  longitude: 75.18468,
+  radiusInMeters: 50,
+};
+
+// 📌 BITM Ballari Branch
+export const BITM_BALLARI_LOCATION = {
+  latitude: 15.16864,
+  longitude: 76.85019,
+  radiusInMeters: 50,
+};
+
 // 🌐 List of all authorized operational locations
 export const OFFICE_LOCATIONS = [
   {
@@ -39,6 +81,42 @@ export const OFFICE_LOCATIONS = [
     name: 'Kalaburagi Branch 2 (Aiwan-e-Shahi Area)',
     latitude: 17.314874,
     longitude: 76.836176,
+    radiusInMeters: 50,
+  },
+  {
+    name: 'Kalaburagi Branch 3 (Aiwan-E-Shahi Area, Shambhognlli)',
+    latitude: 17.31464,
+    longitude: 76.83405,
+    radiusInMeters: 200,
+  },
+  {
+    name: 'Cambridge Institute Of Technology (Krishnarajapuram)',
+    latitude: 13.012195,
+    longitude: 77.703683,
+    radiusInMeters: 50,
+  },
+  {
+    name: 'Soladevanahalli Campus (Bengaluru)',
+    latitude: 13.083725,
+    longitude: 77.484023,
+    radiusInMeters: 50,
+  },
+  {
+    name: 'Bengaluru MG Road Branch (Shanthala Nagar)',
+    latitude: 12.974233,
+    longitude: 77.608287,
+    radiusInMeters: 50,
+  },
+  {
+    name: 'VCET Puttur Campus',
+    latitude: 12.78172,
+    longitude: 75.18468,
+    radiusInMeters: 50,
+  },
+  {
+    name: 'BITM Ballari Campus',
+    latitude: 15.16864,
+    longitude: 76.85019,
     radiusInMeters: 50,
   },
 ];

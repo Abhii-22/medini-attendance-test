@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, Text, View, ScrollView, TouchableOpacity, ActivityIndicator, Image, Modal } from 'react-native';
+import { StyleSheet, Text, View, ScrollView, TouchableOpacity, ActivityIndicator, Image, Modal, TextInput } from 'react-native';
 import { useAuth, API_BASE_URL } from './_layout';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -9,7 +9,8 @@ interface EmployeeProfile {
   employeeId: string;
   designation: string;
   email: string;
-  role?: string;
+  lunchBreakMinutes?: number;
+  role?: string | string[];
 }
 
 interface AttendanceRecord {
@@ -39,12 +40,14 @@ export default function AdminViewScreen() {
   const { logout, currentUser } = useAuth();
 
   const [selectedEmpFilter, setSelectedEmpFilter] = useState<string>('ALL');
+  const [searchQuery, setSearchQuery] = useState<string>(''); // 🔍 SEARCH STATE
   
   const currentMonthName = new Date().toLocaleDateString('en-US', { month: 'long' }); 
   const [selectedMonthFilter, setSelectedMonthFilter] = useState<string>(currentMonthName);
   
   const [employees, setEmployees] = useState<EmployeeProfile[]>([]);
   const [attendanceLogs, setAttendanceLogs] = useState<AttendanceRecord[]>([]);
+  const [allAttendanceLogs, setAllAttendanceLogs] = useState<AttendanceRecord[]>([]); // 🌟 Global logs storage
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null); 
 
@@ -62,34 +65,64 @@ export default function AdminViewScreen() {
     'July', 'August', 'September', 'October', 'November', 'December'
   ];
 
-  // ⏱️ STABLE TYPE-SAFE WORK HOURS CALCULATOR
-  const calculateWorkingHours = (inTime: string, outTime: string) => {
+  // ⏱️ ACCURATE WORKING HOURS CALCULATOR WITH LUNCH DEDUCTION MATCHING HISTORY PAGE
+  const calculateWorkingHours = (inTime: string, outTime: string, employeeNameTarget?: string, employeeIdTarget?: string) => {
     if (!inTime || !outTime || inTime === '--:--' || outTime === '--:--' || inTime === 'ABSENT' || outTime === 'ABSENT') {
       return '--';
     }
     try {
       const parseTimeToMinutes = (timeStr: string) => {
-        const parts = timeStr.split(' ');
-        const timePart = parts[0] || '0:0';
-        const modifier = parts[1] || 'AM';
+        const cleanTime = timeStr.trim().toUpperCase();
+        const isPM = cleanTime.includes('PM');
+        const isAM = cleanTime.includes('AM');
+        
+        const timeOnly = cleanTime.replace(/(AM|PM)/g, '').trim();
+        const parts = timeOnly.split(/[:\.]/).map(Number);
+        
+        let hours = parts[0] || 0;
+        const minutes = parts[1] || 0;
 
-        const timeSplit = timePart.split(':');
-        let hours = Number(timeSplit[0]) || 0;
-        const minutes = Number(timeSplit[1]) || 0;
+        if (isPM && hours < 12) hours += 12;
+        if (isAM && hours === 12) hours = 0;
 
-        if (modifier === 'PM' && hours < 12) hours += 12;
-        if (modifier === 'AM' && hours === 12) hours = 0;
         return hours * 60 + minutes;
       };
 
-      const diffInMinutes = parseTimeToMinutes(outTime) - parseTimeToMinutes(inTime);
-      if (diffInMinutes <= 0) return '0h 0m';
+      const inMins = parseTimeToMinutes(inTime);
+      const outMins = parseTimeToMinutes(outTime);
 
-      return `${Math.floor(diffInMinutes / 60)}h ${diffInMinutes % 60}m`;
+      const grossMinutes = outMins - inMins;
+      if (grossMinutes <= 0) return '0h 0m';
+
+      const matchedEmp = employees.find(e => 
+        (employeeIdTarget && e.employeeId?.toLowerCase().trim() === employeeIdTarget?.toLowerCase().trim()) ||
+        (employeeNameTarget && e.name?.toLowerCase().trim() === employeeNameTarget?.toLowerCase().trim())
+      );
+
+      const lunchDeduction = matchedEmp?.lunchBreakMinutes !== undefined 
+        ? Number(matchedEmp.lunchBreakMinutes) 
+        : 0;
+
+      const netMinutes = grossMinutes >= lunchDeduction ? grossMinutes - lunchDeduction : 0;
+
+      return `${Math.floor(netMinutes / 60)}h ${netMinutes % 60}m`;
     } catch (e) {
       return '--';
     }
   };
+
+  // 🔍 FILTERED EMPLOYEES FOR CAROUSEL (EXCLUDES ADMIN_VIEW ROLES)
+  const filteredEmployees = employees.filter((emp) => {
+    const roles = Array.isArray(emp.role) ? emp.role : [emp.role || 'EMPLOYEE'];
+    if (roles.includes('ADMIN_VIEW')) return false;
+
+    if (!searchQuery.trim()) return true;
+    const query = searchQuery.toLowerCase();
+    return (
+      emp.name.toLowerCase().includes(query) ||
+      emp.employeeId.toLowerCase().includes(query)
+    );
+  });
 
   const getFilteredLogs = () => {
     const currentYearString = new Date().getFullYear().toString();
@@ -99,17 +132,36 @@ export default function AdminViewScreen() {
       const logDateLower = log.date.toLowerCase();
       const matchesMonth = logDateLower.includes(selectedMonthFilter.toLowerCase());
       const matchesYear = logDateLower.includes(currentYearString);
-      return matchesMonth && matchesYear;
+      
+      // 🔎 Apply search query on log stream
+      const query = searchQuery.toLowerCase().trim();
+      const matchesSearch = query === '' || 
+        log.employeeName?.toLowerCase().includes(query) || 
+        log.employeeIdReference?.toLowerCase().includes(query);
+
+      return matchesMonth && matchesYear && matchesSearch;
     });
   };
 
   const filteredLogs = getFilteredLogs();
 
+  // 📊 CALCULATE MONTHLY METRICS FOR ALL EMPLOYEES OR INDIVIDUAL EMPLOYEE
   const getAttendanceMetrics = () => {
+    const currentYearString = new Date().getFullYear().toString();
+    
+    // Choose logs source based on selection
+    const logsToAnalyze = selectedEmpFilter === 'ALL' ? allAttendanceLogs : attendanceLogs;
+
+    const monthlyLogs = logsToAnalyze.filter((log) => {
+      if (!log.date) return false;
+      const logDateLower = log.date.toLowerCase();
+      return logDateLower.includes(selectedMonthFilter.toLowerCase()) && logDateLower.includes(currentYearString);
+    });
+
     let presentCount = 0;
     let absentCount = 0;
 
-    filteredLogs.forEach((log) => {
+    monthlyLogs.forEach((log) => {
       if (log.loginTime === 'ABSENT' || log.logoutTime === 'ABSENT') {
         absentCount++;
       } else if (log.loginTime !== '--:--') {
@@ -134,6 +186,19 @@ export default function AdminViewScreen() {
     }
   };
 
+  // 🌐 FETCH ALL LOGS ONCE FOR GLOBAL METRICS
+  const fetchGlobalAttendanceLogs = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/admin/attendance-sheet?employeeName=ALL`);
+      if (response.ok) {
+        const data = await response.json();
+        setAllAttendanceLogs(data);
+      }
+    } catch (error) {
+      console.error('Error fetching global logs:', error);
+    }
+  };
+
   const fetchAttendanceLogs = async (filterName: string) => {
     try {
       setIsLoading(true);
@@ -141,6 +206,9 @@ export default function AdminViewScreen() {
       if (response.ok) {
         const data = await response.json();
         setAttendanceLogs(data);
+        if (filterName === 'ALL') {
+          setAllAttendanceLogs(data);
+        }
       }
     } catch (error) {
       console.error('Error fetching logs stream:', error);
@@ -151,6 +219,7 @@ export default function AdminViewScreen() {
 
   useEffect(() => {
     fetchEmployeesList();
+    fetchGlobalAttendanceLogs();
   }, []);
 
   useEffect(() => {
@@ -192,26 +261,42 @@ export default function AdminViewScreen() {
       
       {/* SUPERVISOR DASHBOARD BANNER */}
       <View style={styles.headerHeroCard}>
-        <View style={styles.headerInfoBlock}>
-          <Text style={styles.headerSubtitle}>ADMINISTRATIVE INSPECTION VIEW</Text>
-          <Text style={styles.headerTitle}>Welcome, {currentUser?.name || 'Supervisor'}</Text>
+        <View style={styles.headerBrandBlock}>
+          <View style={styles.logoBadgeFrame}>
+            <Image 
+              source={require('../assets/images/medini new logo.jpeg')} 
+              style={styles.mediniLogoImage} 
+              resizeMode="contain"
+            />
+          </View>
+          <View style={styles.headerInfoBlock}>
+            <Text style={styles.headerSubtitle}>ADMINISTRATIVE INSPECTION VIEW</Text>
+            <Text style={styles.headerTitle}>Welcome, {currentUser?.name || 'Supervisor'}</Text>
+          </View>
         </View>
         <TouchableOpacity style={styles.exitBadgeBtn} activeOpacity={0.7} onPress={() => logout()}>
-          <Text style={styles.exitBtnText}>Sign Out 🚪</Text>
+          <Ionicons name="log-out-outline" size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
+          <Text style={styles.exitBtnText}>Sign Out</Text>
         </TouchableOpacity>
       </View>
 
       {/* METRICS OVERVIEW CARDS */}
       <Text style={styles.sectionHeadingLabel}>
         {selectedEmpFilter === 'ALL' 
-          ? `🌐 Global Analytics (${selectedMonthFilter} ${new Date().getFullYear()})` 
+          ? `🌐 All Employees Analytics (${selectedMonthFilter} ${new Date().getFullYear()})` 
           : `👤 ${selectedEmpFilter} Summary (${selectedMonthFilter} ${new Date().getFullYear()})`
         }
       </Text>
       <View style={styles.summaryGridContainer}>
         <View style={[styles.statBoxSummary, { borderLeftColor: '#007AFF' }]}>
           <Text style={styles.statBoxNumber}>
-            {selectedEmpFilter === 'ALL' ? employees.filter(e => e.role !== 'ADMIN_VIEW').length : '1'}
+            {selectedEmpFilter === 'ALL' 
+              ? employees.filter(e => {
+                  const r = Array.isArray(e.role) ? e.role : [e.role || 'EMPLOYEE'];
+                  return !r.includes('ADMIN_VIEW');
+                }).length 
+              : '1'
+            }
           </Text>
           <Text style={styles.statBoxLabel}>
             {selectedEmpFilter === 'ALL' ? 'Staff Members' : 'Active Profile'}
@@ -220,25 +305,55 @@ export default function AdminViewScreen() {
         
         <View style={[styles.statBoxSummary, { borderLeftColor: '#38A169' }]}>
           <Text style={[styles.statBoxNumber, { color: '#2F855A' }]}>{presentCount}</Text>
-          <Text style={styles.statBoxLabel}>Days Present</Text>
+          <Text style={styles.statBoxLabel}>
+            {selectedEmpFilter === 'ALL' ? 'Employees Total Days Present' : 'Days Present'}
+          </Text>
         </View>
 
         <View style={[styles.statBoxSummary, { borderLeftColor: '#E53E3E' }]}>
           <Text style={[styles.statBoxNumber, { color: '#C53030' }]}>{absentCount}</Text>
-          <Text style={styles.statBoxLabel}>Days Absent</Text>
+          <Text style={styles.statBoxLabel}>
+            {selectedEmpFilter === 'ALL' ? 'Employees Total Days Absent' : 'Days Absent'}
+          </Text>
         </View>
+      </View>
+
+      {/* 🔍 SEARCH BAR INPUT */}
+      <View style={styles.searchBarContainer}>
+        <Ionicons name="search" size={18} color="#718096" style={{ marginRight: 8 }} />
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search employee by name or ID..."
+          placeholderTextColor="#A0AEC0"
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+        />
+        {searchQuery.length > 0 && (
+          <TouchableOpacity onPress={() => setSearchQuery('')}>
+            <Ionicons name="close-circle" size={18} color="#A0AEC0" />
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* FILTER CAROUSEL */}
       <Text style={styles.sectionHeadingLabel}>Workforce Filter Focal Point</Text>
       <View style={styles.pillScrollFrame}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <TouchableOpacity style={[styles.filterPill, selectedEmpFilter === 'ALL' && styles.activeFilterPill]} onPress={() => setSelectedEmpFilter('ALL')}>
+          <TouchableOpacity 
+            style={[styles.filterPill, selectedEmpFilter === 'ALL' && styles.activeFilterPill]} 
+            onPress={() => setSelectedEmpFilter('ALL')}
+          >
             <Text style={[styles.filterPillText, selectedEmpFilter === 'ALL' && styles.activeFilterPillText]}>🌐 Global Workforce</Text>
           </TouchableOpacity>
-          {employees.filter(e => e.role !== 'ADMIN_VIEW').map((emp) => (
-            <TouchableOpacity key={emp._id} style={[styles.filterPill, selectedEmpFilter === emp.name && styles.activeFilterPill]} onPress={() => setSelectedEmpFilter(emp.name)}>
-              <Text style={[styles.filterPillText, selectedEmpFilter === emp.name && styles.activeFilterPillText]}>👤 {emp.name}</Text>
+          {filteredEmployees.map((emp) => (
+            <TouchableOpacity 
+              key={emp._id} 
+              style={[styles.filterPill, selectedEmpFilter === emp.name && styles.activeFilterPill]} 
+              onPress={() => setSelectedEmpFilter(emp.name)}
+            >
+              <Text style={[styles.filterPillText, selectedEmpFilter === emp.name && styles.activeFilterPillText]}>
+                👤 {emp.name}
+              </Text>
             </TouchableOpacity>
           ))}
         </ScrollView>
@@ -272,7 +387,9 @@ export default function AdminViewScreen() {
         </View>
       ) : filteredLogs.length === 0 ? (
         <View style={styles.emptyCardFrame}>
-          <Text style={styles.emptyTextMessage}>No log items recorded inside {selectedMonthFilter} {new Date().getFullYear()}.</Text>
+          <Text style={styles.emptyTextMessage}>
+            {searchQuery ? `No matching logs found for "${searchQuery}".` : `No log items recorded inside ${selectedMonthFilter} ${new Date().getFullYear()}.`}
+          </Text>
         </View>
       ) : (
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
@@ -316,7 +433,7 @@ export default function AdminViewScreen() {
                     <View style={[styles.metricBox, { backgroundColor: '#F0FDF4', borderColor: '#DCFCE7' }, isAbsent && { backgroundColor: '#FFF5F5', borderColor: '#FED7D7' }]}>
                       <Text style={[styles.metricLabel, { color: '#16A34A' }, isAbsent && { color: '#E53E3E' }]}>DURATION</Text>
                       <Text style={[styles.metricTime, { color: '#15803D' }, isAbsent && { color: '#E53E3E' }]}>
-                        {calculateWorkingHours(logItem.loginTime, logItem.logoutTime)}
+                        {calculateWorkingHours(logItem.loginTime, logItem.logoutTime, logItem.employeeName, logItem.employeeIdReference)}
                       </Text>
                     </View>
 
@@ -448,17 +565,25 @@ export default function AdminViewScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F4F7FA', paddingHorizontal: 16, paddingTop: 50 },
-  headerHeroCard: { backgroundColor: '#1A202C', padding: 20, borderRadius: 24, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
-  headerInfoBlock: { flex: 1 },
+  headerHeroCard: { backgroundColor: '#1A202C', padding: 16, borderRadius: 22, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+  headerBrandBlock: { flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 },
+  logoBadgeFrame: { width: 62, height: 62, borderRadius: 14, backgroundColor: '#FFFFFF', padding: 4, justifyContent: 'center', alignItems: 'center', marginRight: 12, borderWidth: 1, borderColor: '#E2E8F0', overflow: 'hidden' },
+  mediniLogoImage: { width: '100%', height: '100%' },
+  headerInfoBlock: { flex: 1, justifyContent: 'center' },
   headerSubtitle: { color: '#A0AEC0', fontSize: 10, fontWeight: '800', letterSpacing: 0.8 },
-  headerTitle: { color: '#FFFFFF', fontSize: 20, fontWeight: '800', marginTop: 2 },
-  exitBadgeBtn: { backgroundColor: '#4A5568', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 12 },
+  headerTitle: { color: '#FFFFFF', fontSize: 16, fontWeight: '800', marginTop: 2 },
+  exitBadgeBtn: { backgroundColor: '#E53E3E', paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10, flexDirection: 'row', alignItems: 'center', flexShrink: 0 },
   exitBtnText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' },
   sectionHeadingLabel: { fontSize: 11, fontWeight: '800', color: '#2B6CB0', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 8, marginTop: 4, paddingLeft: 2 },
   summaryGridContainer: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginBottom: 14 },
   statBoxSummary: { width: '31.5%', borderRadius: 16, padding: 12, borderWidth: 1, backgroundColor: '#FFFFFF', borderColor: '#E2E8F0', borderLeftWidth: 4 },
   statBoxNumber: { fontSize: 19, fontWeight: '800', color: '#1A202C' },
   statBoxLabel: { fontSize: 9, fontWeight: '700', color: '#718096', marginTop: 3 },
+  
+  /* 🔍 SEARCH BAR STYLES */
+  searchBarContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', borderRadius: 14, paddingHorizontal: 12, height: 42, borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 10 },
+  searchInput: { flex: 1, fontSize: 13, color: '#1A202C', fontWeight: '600' },
+
   pillScrollFrame: { maxHeight: 44, marginBottom: 12 },
   filterPill: { backgroundColor: '#E2E8F0', paddingHorizontal: 14, justifyContent: 'center', alignItems: 'center', borderRadius: 14, marginRight: 6, height: 36, borderWidth: 1, borderColor: '#CBD5E0' },
   activeFilterPill: { backgroundColor: '#007AFF', borderColor: '#007AFF' },

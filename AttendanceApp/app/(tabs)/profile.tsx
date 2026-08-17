@@ -1,15 +1,54 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, ScrollView, Alert } from 'react-native';
-import { useAuth } from '../_layout';
+import { useAuth, API_BASE_URL } from '../_layout';
 import { Ionicons, Feather } from '@expo/vector-icons';
 
 export default function ProfileScreen() {
   const { currentUser, logout } = useAuth();
+  const [lunchBreakDisplay, setLunchBreakDisplay] = useState<string>('0 Minutes');
 
   const employeeName = currentUser?.name || 'Employee';
   const employeeRole = currentUser?.designation || 'Staff Member';
   const employeeId = currentUser?.employeeId || 'N/A';
   const employeeEmail = currentUser?.email || 'N/A';
+
+  useEffect(() => {
+    const fetchEmployeeLunchProfile = async () => {
+      if (!currentUser) return;
+      try {
+        const response = await fetch(`${API_BASE_URL}/admin/employees`);
+        if (response.ok) {
+          const data = await response.json();
+          const cleanCurrentId = currentUser.employeeId?.toLowerCase().trim();
+          const cleanCurrentName = currentUser.name?.toLowerCase().trim();
+
+          const currentProfile = data.find((e: any) => {
+            const eName = e.name?.toLowerCase().trim();
+            const eId = e.employeeId?.toLowerCase().trim();
+            return (cleanCurrentId && eId === cleanCurrentId) || (cleanCurrentName && eName === cleanCurrentName);
+          });
+
+          if (currentProfile && currentProfile.lunchBreakMinutes !== undefined) {
+            const totalMins = Number(currentProfile.lunchBreakMinutes);
+            const hrs = Math.floor(totalMins / 60);
+            const mins = totalMins % 60;
+
+            if (hrs > 0 && mins > 0) {
+              setLunchBreakDisplay(`${hrs} Hour${hrs > 1 ? 's' : ''} ${mins} Mins`);
+            } else if (hrs > 0) {
+              setLunchBreakDisplay(`${hrs} Hour${hrs > 1 ? 's' : ''}`);
+            } else {
+              setLunchBreakDisplay(`${mins} Minutes`);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching lunch profile:', error);
+      }
+    };
+
+    fetchEmployeeLunchProfile();
+  }, [currentUser]);
 
   const handleLogoutPress = () => {
     Alert.alert(
@@ -67,6 +106,16 @@ export default function ProfileScreen() {
           <View style={styles.infoTextFrame}>
             <Text style={styles.infoItemKey}>Assigned Designation</Text>
             <Text style={styles.infoItemValue}>{employeeRole}</Text>
+          </View>
+        </View>
+
+        <View style={styles.infoRowItem}>
+          <View style={styles.infoIconWrapper}>
+            <Ionicons name="fast-food-outline" size={16} color="#718096" />
+          </View>
+          <View style={styles.infoTextFrame}>
+            <Text style={styles.infoItemKey}>Fixed Admin Lunch Break</Text>
+            <Text style={styles.infoItemValue}>{lunchBreakDisplay}</Text>
           </View>
         </View>
 

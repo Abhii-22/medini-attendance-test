@@ -1,10 +1,20 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, ScrollView, RefreshControl, Dimensions } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, ScrollView, RefreshControl, Dimensions, Image } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth, API_BASE_URL } from '../_layout';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 
 const { width } = Dimensions.get('window');
+
+interface EmployeeProfile {
+  _id: string;
+  name: string;
+  employeeId: string;
+  designation: string;
+  email: string;
+  lunchBreakMinutes?: number;
+  role?: string[];
+}
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -14,6 +24,7 @@ export default function HomeScreen() {
   const [absentCount, setAbsentCount] = useState<number>(0);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [todayPunch, setTodayPunch] = useState({ in: '--:--', out: '--:--' });
+  const [employeesList, setEmployeesList] = useState<EmployeeProfile[]>([]);
 
   const currentMonthName = new Date().toLocaleDateString('en-US', { month: 'long' });
 
@@ -36,24 +47,61 @@ export default function HomeScreen() {
     });
   };
 
-  // ⏱️ CENTRAL PARSING ENGINE TO CALCULATE WORK HOURS ON THE FLY
+  const fetchEmployeesList = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/admin/employees`);
+      if (response.ok) {
+        const data = await response.json();
+        setEmployeesList(data);
+      }
+    } catch (error) {
+      console.error('Failed fetching employees registry for lunch deduction:', error);
+    }
+  };
+
   const calculateWorkingHours = (inTime: string, outTime: string) => {
     if (!inTime || !outTime || inTime === '--:--' || outTime === '--:--' || inTime === 'ABSENT' || outTime === 'ABSENT') {
       return '--';
     }
     try {
       const parseTimeToMinutes = (timeStr: string) => {
-        const [time, modifier] = timeStr.split(' ');
-        let [hours, minutes] = time.split(':').map(Number);
-        if (modifier === 'PM' && hours < 12) hours += 12;
-        if (modifier === 'AM' && hours === 12) hours = 0;
+        const cleanTime = timeStr.trim().toUpperCase();
+        const isPM = cleanTime.includes('PM');
+        const isAM = cleanTime.includes('AM');
+        
+        const timeOnly = cleanTime.replace(/(AM|PM)/g, '').trim();
+        const parts = timeOnly.split(/[:\.]/).map(Number);
+        
+        let hours = parts[0] || 0;
+        const minutes = parts[1] || 0;
+
+        if (isPM && hours < 12) hours += 12;
+        if (isAM && hours === 12) hours = 0;
+
         return hours * 60 + minutes;
       };
 
-      const diffInMinutes = parseTimeToMinutes(outTime) - parseTimeToMinutes(inTime);
-      if (diffInMinutes <= 0) return '0h 0m';
+      const inMins = parseTimeToMinutes(inTime);
+      const outMins = parseTimeToMinutes(outTime);
 
-      return `${Math.floor(diffInMinutes / 60)}h ${diffInMinutes % 60}m`;
+      const grossMinutes = outMins - inMins;
+      if (grossMinutes <= 0) return '0h 0m';
+
+      const cleanCurrentId = currentUser?.employeeId?.toLowerCase().trim();
+      const cleanCurrentName = currentUser?.name?.toLowerCase().trim();
+
+      const matchedEmp = employeesList.find(e => 
+        (cleanCurrentId && e.employeeId?.toLowerCase().trim() === cleanCurrentId) ||
+        (cleanCurrentName && e.name?.toLowerCase().trim() === cleanCurrentName)
+      );
+
+      const lunchDeduction = matchedEmp?.lunchBreakMinutes !== undefined 
+        ? Number(matchedEmp.lunchBreakMinutes) 
+        : 0;
+
+      const netMinutes = grossMinutes >= lunchDeduction ? grossMinutes - lunchDeduction : 0;
+
+      return `${Math.floor(netMinutes / 60)}h ${netMinutes % 60}m`;
     } catch (e) {
       return '--';
     }
@@ -62,6 +110,7 @@ export default function HomeScreen() {
   const syncDashboardMetricsData = async () => {
     if (!currentUser?.name) return;
     try {
+      await fetchEmployeesList();
       const response = await fetch(`${API_BASE_URL}/admin/attendance-sheet?employeeName=${currentUser.name}`);
       if (response.ok) {
         const logs = await response.json();
@@ -124,16 +173,20 @@ export default function HomeScreen() {
         />
       }
     >
-      {/* 🟦 HEADER HERO CARD */}
+      {/* 🟦 HEADER HERO CARD WITH PROPERLY FITTED MEDINI LOGO */}
       <View style={styles.dashboardHeroCard}>
         <View style={styles.heroHeaderRow}>
+          <View style={styles.logoBadgeFrame}>
+            <Image 
+              source={require('../../assets/images/medini new logo.jpeg')} 
+              style={styles.mediniLogoImage} 
+              resizeMode="contain"
+            />
+          </View>
           <View style={styles.heroTextGroup}>
             <Text style={styles.heroTimeLabel}>{getGreetingSegmentText()}</Text>
             <Text style={styles.heroNameHeading} numberOfLines={1}>{employeeName}</Text>
             <Text style={styles.heroRoleTag}>{employeeRole}</Text>
-          </View>
-          <View style={styles.heroAvatarBadge}>
-            <Text style={styles.heroAvatarText}>{employeeName.charAt(0).toUpperCase()}</Text>
           </View>
         </View>
 
@@ -264,13 +317,13 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8FAFC', paddingHorizontal: 16, paddingTop: 20 },
   dashboardHeroCard: { backgroundColor: '#007AFF', padding: 20, borderRadius: 20, shadowColor: '#007AFF', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.12, shadowRadius: 12, elevation: 3, marginBottom: 20 },
-  heroHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  heroTextGroup: { flex: 1, paddingRight: 10 },
-  heroTimeLabel: { color: '#E0F0FF', fontSize: 12, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5 },
-  heroNameHeading: { color: '#FFFFFF', fontSize: 22, fontWeight: '800', marginTop: 2 },
-  heroRoleTag: { color: '#B3D7FF', fontSize: 13, fontWeight: '600', marginTop: 2 },
-  heroAvatarBadge: { width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(255,255,255,0.2)', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)' },
-  heroAvatarText: { color: '#FFFFFF', fontSize: 18, fontWeight: '800' },
+  heroHeaderRow: { flexDirection: 'row', alignItems: 'center' },
+  logoBadgeFrame: { width: 68, height: 68, borderRadius: 16, backgroundColor: '#FFFFFF', padding: 6, justifyContent: 'center', alignItems: 'center', marginRight: 14, borderWidth: 1, borderColor: '#E2E8F0', overflow: 'hidden' },
+  mediniLogoImage: { width: '100%', height: '100%' },
+  heroTextGroup: { flex: 1 },
+  heroTimeLabel: { color: '#E0F0FF', fontSize: 11, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5 },
+  heroNameHeading: { color: '#FFFFFF', fontSize: 20, fontWeight: '800', marginTop: 2 },
+  heroRoleTag: { color: '#B3D7FF', fontSize: 12, fontWeight: '600', marginTop: 2 },
   heroDividerLine: { height: 1, backgroundColor: 'rgba(255,255,255,0.12)', marginVertical: 14 },
   heroFooterRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   metaBadgeItem: { flexDirection: 'row', alignItems: 'center' },

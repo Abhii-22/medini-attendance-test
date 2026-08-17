@@ -1,5 +1,5 @@
-import React, { useState, useRef } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator, Alert, Image, Dimensions, ScrollView } from 'react-native';
+import React, { useState, useRef, useEffect } from 'react';
+import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator, Alert, Image, Dimensions, ScrollView, Modal } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Location from 'expo-location';
 import { OFFICE_LOCATIONS, isUserWithinAnyOffice } from '@/constants/Location';
@@ -24,6 +24,15 @@ export default function AttendanceScreen() {
   const [matchedOfficeName, setMatchedOfficeName] = useState<string>('');
   const [locationAddress, setLocationAddress] = useState<string>('');
   const [currentDateTime, setCurrentDateTime] = useState<string>('');
+  const [isMocked, setIsMocked] = useState<boolean>(false);
+
+  // 🔒 TODAY'S PUNCH LOCK STATES
+  const [hasPunchedIn, setHasPunchedIn] = useState<boolean>(false);
+  const [hasPunchedOut, setHasPunchedOut] = useState<boolean>(false);
+  const [isAbsentToday, setIsAbsentToday] = useState<boolean>(false);
+
+  // 🛑 ABSENCE CONFIRMATION POPUP MODAL STATE
+  const [showAbsenceModal, setShowAbsenceModal] = useState<boolean>(false);
 
   const cameraRef = useRef<any>(null);
 
@@ -31,12 +40,116 @@ export default function AttendanceScreen() {
   const employeeId = currentUser?.employeeId || 'N/A';
   const employeeDept = currentUser?.designation || 'Staff Member';
 
+  // 🔍 HELPER TO MATCH TODAY'S DATE ACROSS ALL DATABASE FORMAT VARIATIONS
+  const isTodayDate = (logDateRaw: string): boolean => {
+    if (!logDateRaw) return false;
+    const now = new Date();
+    const tD = now.getDate();
+    const tM = now.getMonth() + 1;
+    const tY = now.getFullYear();
+
+    const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`);
+
+    const formatsToTest = [
+      `${pad(tD)}/${pad(tM)}/${tY}`,
+      `${tD}/${tM}/${tY}`,
+      `${pad(tM)}/${pad(tD)}/${tY}`,
+      `${tM}/${tD}/${tY}`,
+      `${tY}-${pad(tM)}-${pad(tD)}`,
+      now.toDateString(),
+      now.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }),
+      now.toLocaleDateString('en-GB'),
+      now.toLocaleDateString('en-US')
+    ];
+
+    const logLower = logDateRaw.toLowerCase().trim();
+    for (const fmt of formatsToTest) {
+      if (logLower.includes(fmt.toLowerCase())) {
+        return true;
+      }
+    }
+
+    const cleanStr = logDateRaw.split('T')[0].trim();
+    const parts = cleanStr.split(/[\/\-\.]/).map((p) => parseInt(p, 10));
+    if (parts.length === 3 && !parts.some(isNaN)) {
+      let d: number, m: number, y: number;
+      if (parts[0] > 1000) {
+        y = parts[0]; m = parts[1]; d = parts[2];
+      } else {
+        d = parts[0]; m = parts[1]; y = parts[2];
+      }
+      if (d === tD && m === tM && y === tY) return true;
+    }
+
+    const parsed = new Date(logDateRaw);
+    if (!isNaN(parsed.getTime())) {
+      return (
+        parsed.getDate() === tD &&
+        parsed.getMonth() + 1 === tM &&
+        parsed.getFullYear() === tY
+      );
+    }
+
+    return false;
+  };
+
+  // 🔄 CHECK TODAY'S PUNCH LOCK STATUS FROM BACKEND UPON MOUNT
+  const checkTodayAttendanceStatus = async () => {
+    if (!currentUser?.name) return;
+    try {
+      const response = await fetch(`${API_BASE_URL}/admin/attendance-sheet?employeeName=${currentUser.name}`);
+      if (response.ok) {
+        const data = await response.json();
+
+        const todayLog = data.find((log: any) => log.date && isTodayDate(log.date));
+
+        if (todayLog) {
+          if (todayLog.loginTime === 'ABSENT' || todayLog.logoutTime === 'ABSENT') {
+            setIsAbsentToday(true);
+            setHasPunchedIn(true);
+            setHasPunchedOut(true);
+          } else {
+            if (todayLog.loginTime && todayLog.loginTime !== '--:--') {
+              setHasPunchedIn(true);
+            }
+            if (todayLog.logoutTime && todayLog.logoutTime !== '--:--') {
+              setHasPunchedOut(true);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Error fetching today status:', e);
+    }
+  };
+
+  useEffect(() => {
+    checkTodayAttendanceStatus();
+  }, [currentUser]);
+
   const handleVerifyLocation = async (type: 'LOGIN' | 'LOGOUT') => {
+    if (type === 'LOGIN' && hasPunchedIn) {
+      Alert.alert('Punch In Locked 🔒', 'You have already recorded your Punch In for today.');
+      return;
+    }
+
+    if (type === 'LOGOUT') {
+      if (!hasPunchedIn) {
+        Alert.alert('Punch In Required ⚠️', 'You must Punch In before you can Punch Out.');
+        return;
+      }
+      if (hasPunchedOut) {
+        Alert.alert('Punch Out Locked 🔒', 'You have already recorded your Punch Out for today.');
+        return;
+      }
+    }
+
     setLoading(true);
     setAttendanceType(type);
     setCurrentDistance(null);
     setMatchedOfficeName('');
     setLocationAddress('');
+    setIsMocked(false);
     setLoadingMessage('Acquiring precise satellite location...');
 
     try {
@@ -59,21 +172,30 @@ export default function AttendanceScreen() {
       const position = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.High,
       }).catch(async () => {
-        return await Location.getLastKnownPositionAsync({}) || {
-          coords: {
-            latitude: OFFICE_LOCATIONS[0].latitude,
-            longitude: OFFICE_LOCATIONS[0].longitude,
-            accuracy: 5
-          }
-        };
+        return await Location.getLastKnownPositionAsync({}) || null;
       });
+
+      if (!position) {
+        Alert.alert('Location Error 📡', 'Unable to retrieve precise GPS coordinates. Please ensure GPS is turned on.');
+        setLoading(false);
+        return;
+      }
+
+      if (position.mocked) {
+        setIsMocked(true);
+        Alert.alert(
+          'Security Policy Violation 🚫',
+          'Mock Location / Fake GPS detected on your device. Please disable Developer Mode / Fake GPS options to punch in.'
+        );
+        resetState();
+        return;
+      }
 
       const now = new Date();
       const dateStr = now.toLocaleDateString('en-GB');
       const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
       setCurrentDateTime(`${dateStr} • ${timeStr}`);
 
-      // 📌 ALWAYS GUARANTEE A VALID STREET ADDRESS OR EXACT GPS COORDINATES
       const fallbackCoords = `Lat: ${position.coords.latitude.toFixed(5)}, Long: ${position.coords.longitude.toFixed(5)}`;
 
       try {
@@ -96,7 +218,6 @@ export default function AttendanceScreen() {
         setLocationAddress(fallbackCoords);
       }
 
-      // 🚀 MULTI-LOCATION GEOFENCE CHECK
       const geofenceResult = isUserWithinAnyOffice(position.coords.latitude, position.coords.longitude);
       const locationAccuracy = position?.coords?.accuracy ?? 0;
 
@@ -108,7 +229,7 @@ export default function AttendanceScreen() {
       } else {
         Alert.alert(
           'Out of Range 📍',
-          'You are outside the authorized radius of all registered office locations (Bengaluru & Kalaburagi).'
+          'You are outside the authorized radius of all registered office locations.'
         );
         resetState();
       }
@@ -159,6 +280,11 @@ export default function AttendanceScreen() {
     }
   };
 
+  const handleConfirmAbsence = () => {
+    setShowAbsenceModal(false);
+    executeCloudAttendanceSubmission('ABSENT', '', '');
+  };
+
   const executeCloudAttendanceSubmission = async (type: 'LOGIN' | 'LOGOUT' | 'ABSENT', photoPayloadString: string, addressString: string) => {
     setLoading(true);
     setLoadingMessage('Uploading shift metrics to database cluster...');
@@ -179,7 +305,8 @@ export default function AttendanceScreen() {
           name: employeeName,
           type: type,
           photoUri: photoPayloadString,
-          locationAddress: addressString
+          locationAddress: addressString,
+          isMocked: isMocked
         })
       });
 
@@ -188,10 +315,21 @@ export default function AttendanceScreen() {
 
       if (response.ok && result.success) {
         if (type !== 'ABSENT') addPunch(type);
+
+        if (type === 'LOGIN') {
+          setHasPunchedIn(true);
+        } else if (type === 'LOGOUT') {
+          setHasPunchedOut(true);
+        } else if (type === 'ABSENT') {
+          setIsAbsentToday(true);
+          setHasPunchedIn(true);
+          setHasPunchedOut(true);
+        }
+
         Alert.alert('Success 🎉', `Log successfully synchronized permanently.`);
         resetState();
       } else {
-        Alert.alert('Upload Failed', result.message || 'Server rejected storage process.');
+        Alert.alert('Upload Failed 🚫', result.message || 'Server rejected storage process.');
         setLoading(false);
       }
     } catch (error: any) {
@@ -213,7 +351,9 @@ export default function AttendanceScreen() {
     setShowCamera(false);
     setLocationAddress('');
     setMatchedOfficeName('');
+    setIsMocked(false);
     setLoading(false);
+    setShowAbsenceModal(false);
   };
 
   return (
@@ -285,42 +425,74 @@ export default function AttendanceScreen() {
               <Text style={styles.panelSectionSubheading}>Initiate immediate hardware geolocation checks to sync intervals:</Text>
               
               <View style={styles.gridRow}>
+                {/* 🔒 PUNCH IN CARD */}
                 <TouchableOpacity
-                  activeOpacity={0.82}
-                  style={[styles.dashboardCardBtn, styles.cardBtnIn]}
+                  activeOpacity={hasPunchedIn ? 1 : 0.82}
+                  style={[
+                    styles.dashboardCardBtn, 
+                    styles.cardBtnIn, 
+                    hasPunchedIn && styles.cardBtnLocked
+                  ]}
                   onPress={() => handleVerifyLocation('LOGIN')}
                 >
-                  <View style={[styles.cardIconCircle, { backgroundColor: '#38A169' }]}>
-                    <MaterialIcons name="login" size={22} color="#FFFFFF" />
+                  <View style={[styles.cardIconCircle, { backgroundColor: hasPunchedIn ? '#A0AEC0' : '#38A169' }]}>
+                    <MaterialIcons name={hasPunchedIn ? 'lock' : 'login'} size={22} color="#FFFFFF" />
                   </View>
                   <View style={styles.cardTextStack}>
-                    <Text style={styles.cardBtnMainText}>PUNCH IN</Text>
-                    <Text style={styles.cardBtnSubtext}>Open Shift Logs</Text>
+                    <Text style={[styles.cardBtnMainText, hasPunchedIn && styles.lockedText]}>
+                      {hasPunchedIn ? 'PUNCHED IN 🔒' : 'PUNCH IN'}
+                    </Text>
+                    <Text style={styles.cardBtnSubtext}>
+                      {hasPunchedIn ? 'Logged for Today' : 'Open Shift Logs'}
+                    </Text>
                   </View>
                 </TouchableOpacity>
 
+                {/* 🔒 PUNCH OUT CARD */}
                 <TouchableOpacity
-                  activeOpacity={0.82}
-                  style={[styles.dashboardCardBtn, styles.cardBtnOut]}
+                  activeOpacity={hasPunchedOut || !hasPunchedIn ? 1 : 0.82}
+                  style={[
+                    styles.dashboardCardBtn, 
+                    styles.cardBtnOut, 
+                    (hasPunchedOut || !hasPunchedIn) && styles.cardBtnLocked
+                  ]}
                   onPress={() => handleVerifyLocation('LOGOUT')}
                 >
-                  <View style={[styles.cardIconCircle, { backgroundColor: '#E53E3E' }]}>
-                    <MaterialIcons name="logout" size={22} color="#FFFFFF" />
+                  <View style={[styles.cardIconCircle, { backgroundColor: hasPunchedOut || !hasPunchedIn ? '#A0AEC0' : '#E53E3E' }]}>
+                    <MaterialIcons name={hasPunchedOut ? 'lock' : 'logout'} size={22} color="#FFFFFF" />
                   </View>
                   <View style={styles.cardTextStack}>
-                    <Text style={styles.cardBtnMainText}>PUNCH OUT</Text>
-                    <Text style={styles.cardBtnSubtext}>Close Shift Logs</Text>
+                    <Text style={[styles.cardBtnMainText, (hasPunchedOut || !hasPunchedIn) && styles.lockedText]}>
+                      {hasPunchedOut ? 'PUNCHED OUT 🔒' : 'PUNCH OUT'}
+                    </Text>
+                    <Text style={styles.cardBtnSubtext}>
+                      {hasPunchedOut ? 'Logged for Today' : !hasPunchedIn ? 'Punch In First' : 'Close Shift Logs'}
+                    </Text>
                   </View>
                 </TouchableOpacity>
               </View>
 
+              {/* DECLARE ABSENCE BUTTON WITH POPUP */}
               <TouchableOpacity 
-                style={styles.absentButtonLarge}
-                activeOpacity={0.85}
-                onPress={() => executeCloudAttendanceSubmission('ABSENT', '', '')}
+                style={[styles.absentButtonLarge, (hasPunchedIn || hasPunchedOut || isAbsentToday) && styles.absentButtonDisabled]}
+                activeOpacity={hasPunchedIn || hasPunchedOut || isAbsentToday ? 1 : 0.85}
+                onPress={() => {
+                  if (hasPunchedIn || hasPunchedOut || isAbsentToday) {
+                    Alert.alert('Shift Already Active/Closed 🔒', 'Attendance record for today is already logged.');
+                  } else {
+                    setShowAbsenceModal(true);
+                  }
+                }}
               >
-                <Ionicons name="close-circle-outline" size={18} color="#E53E3E" style={{ marginRight: 6 }} />
-                <Text style={styles.absentButtonText}>Declare Absence Registry</Text>
+                <Ionicons 
+                  name={isAbsentToday ? "lock-closed" : "close-circle-outline"} 
+                  size={18} 
+                  color={hasPunchedIn || hasPunchedOut || isAbsentToday ? "#A0AEC0" : "#E53E3E"} 
+                  style={{ marginRight: 6 }} 
+                />
+                <Text style={[styles.absentButtonText, (hasPunchedIn || hasPunchedOut || isAbsentToday) && { color: "#A0AEC0" }]}>
+                  {isAbsentToday ? 'Absence Declared Today 🔒' : 'Declare Absence Registry'}
+                </Text>
               </TouchableOpacity>
             </View>
           )}
@@ -376,6 +548,44 @@ export default function AttendanceScreen() {
           )}
         </ScrollView>
       )}
+
+      {/* 🛑 ABSENCE CONFIRMATION POPUP NOTIFICATION MODAL */}
+      <Modal
+        visible={showAbsenceModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowAbsenceModal(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCardContainer}>
+            <View style={styles.modalIconCircle}>
+              <Ionicons name="warning-outline" size={28} color="#E53E3E" />
+            </View>
+            
+            <Text style={styles.modalTitle}>Confirm Absence</Text>
+            <Text style={styles.modalMessage}>
+              Are you sure you want to declare absence for today? This action will mark your record as absent.
+            </Text>
+
+            <View style={styles.modalButtonRow}>
+              <TouchableOpacity 
+                style={styles.modalCancelBtn} 
+                onPress={() => setShowAbsenceModal(false)}
+              >
+                <Text style={styles.modalCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity 
+                style={styles.modalConfirmBtn} 
+                onPress={handleConfirmAbsence}
+              >
+                <Text style={styles.modalConfirmBtnText}>Confirm Absence</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
     </View>
   );
 }
@@ -401,11 +611,14 @@ const styles = StyleSheet.create({
   dashboardCardBtn: { width: '48.5%', height: 145, borderRadius: 18, padding: 14, justifyContent: 'space-between', borderWidth: 1, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.01, shadowRadius: 4, elevation: 1, backgroundColor: '#FFFFFF', borderColor: '#E2E8F0' },
   cardBtnIn: { borderTopWidth: 4, borderTopColor: '#38A169' },
   cardBtnOut: { borderTopWidth: 4, borderTopColor: '#E53E3E' },
+  cardBtnLocked: { backgroundColor: '#F7FAFC', borderColor: '#E2E8F0', opacity: 0.7, borderTopColor: '#A0AEC0' },
   cardIconCircle: { width: 38, height: 38, borderRadius: 12, justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 2 },
   cardTextStack: { marginTop: 12 },
   cardBtnMainText: { fontSize: 14, fontWeight: '800', color: '#1A202C' },
+  lockedText: { color: '#718096' },
   cardBtnSubtext: { fontSize: 11, color: '#718096', fontWeight: '600', marginTop: 2 },
   absentButtonLarge: { backgroundColor: '#FFF5F5', borderWidth: 1, borderColor: '#FED7D7', paddingVertical: 14, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginTop: 16, flexDirection: 'row' },
+  absentButtonDisabled: { backgroundColor: '#EDF2F7', borderColor: '#CBD5E0', opacity: 0.8 },
   absentButtonText: { color: '#E53E3E', fontSize: 13, fontWeight: '700' },
   cameraContainer: { flex: 1, backgroundColor: '#000' },
   cameraOverlay: { justifyContent: 'space-between', paddingVertical: 40 },
@@ -443,5 +656,17 @@ const styles = StyleSheet.create({
   premiumRetakeBtn: { borderColor: '#CBD5E0', borderWidth: 1, width: '40%', paddingVertical: 14, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF', flexDirection: 'row' },
   premiumRetakeBtnText: { color: '#4A5568', fontSize: 14, fontWeight: '600' },
   modernLoaderContainer: { paddingVertical: 40, justifyContent: 'center', alignItems: 'center', width: '100%' },
-  modernLoaderText: { color: '#718096', fontSize: 12, marginTop: 10, fontWeight: '600' }
+  modernLoaderText: { color: '#718096', fontSize: 12, marginTop: 10, fontWeight: '600' },
+
+  /* 🛑 MODAL STYLES */
+  modalBackdrop: { flex: 1, backgroundColor: 'rgba(26, 32, 44, 0.75)', justifyContent: 'center', alignItems: 'center', padding: 20 },
+  modalCardContainer: { width: '100%', maxWidth: 340, backgroundColor: '#FFFFFF', borderRadius: 24, padding: 20, alignItems: 'center', borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.15, shadowRadius: 20, elevation: 8 },
+  modalIconCircle: { width: 56, height: 56, borderRadius: 28, backgroundColor: '#FFF5F5', justifyContent: 'center', alignItems: 'center', marginBottom: 14, borderWidth: 1, borderColor: '#FED7D7' },
+  modalTitle: { fontSize: 18, fontWeight: '800', color: '#1A202C', marginBottom: 6 },
+  modalMessage: { fontSize: 13, color: '#718096', textAlign: 'center', lineHeight: 18, marginBottom: 20 },
+  modalButtonRow: { flexDirection: 'row', justifyContent: 'space-between', width: '100%' },
+  modalCancelBtn: { flex: 1, backgroundColor: '#EDF2F7', paddingVertical: 12, borderRadius: 12, alignItems: 'center', marginRight: 8 },
+  modalCancelBtnText: { color: '#4A5568', fontSize: 13, fontWeight: '700' },
+  modalConfirmBtn: { flex: 1, backgroundColor: '#E53E3E', paddingVertical: 12, borderRadius: 12, alignItems: 'center', marginLeft: 8 },
+  modalConfirmBtnText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700' }
 });

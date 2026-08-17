@@ -4,8 +4,16 @@ import { v2 as cloudinary } from 'cloudinary';
 import { AttendanceShiftLog, RegisteredEmployee } from '../models/AttendanceSchemas.js';
 
 export const punchClock = async (req: Request, res: Response): Promise<any> => {
-  const { employeeId, name, type, photoUri, locationAddress } = req.body; 
-  
+  const { employeeId, name, type, photoUri, locationAddress, isMocked } = req.body; 
+
+  // 🛡️ REJECT FAKE GPS / MOCK LOCATION IMMEDIATELY
+  if (isMocked === true) {
+    return res.status(400).json({
+      success: false,
+      message: 'Punch rejected: Mock location / Fake GPS detected on your device. Please disable Developer Options.'
+    });
+  }
+
   const now = new Date();
   const formattedDate = now.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'Asia/Kolkata' });
   const formattedDay = now.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'Asia/Kolkata' });
