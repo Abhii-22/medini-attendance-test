@@ -63,6 +63,34 @@ export const BITM_BALLARI_LOCATION = {
   radiusInMeters: 50,
 };
 
+// 📌 Paiyanur Branch (Rajiv Gandhi Salai, Tamil Nadu)
+export const PAIYANUR_LOCATION = {
+  latitude: 12.647998,
+  longitude: 80.174428,
+  radiusInMeters: 100,
+};
+
+// 📌 Karunguzhipallam Branch (Tamil Nadu)
+export const KARUNGUZHIPALLAM_LOCATION = {
+  latitude: 12.656691,
+  longitude: 80.178922,
+  radiusInMeters: 50,
+};
+
+// 📌 Central Telecom Society Location (Bengaluru)
+export const CENTRAL_TELECOM_SOCIETY_LOCATION = {
+  latitude: 13.160236,
+  longitude: 77.636901,
+  radiusInMeters: 50,
+};
+
+// 📌 Chikkaballapur Branch (Karnataka)
+export const CHIKKABALLAPUR_LOCATION = {
+  latitude: 13.395601,
+  longitude: 77.732479,
+  radiusInMeters: 50,
+};
+
 // 🌐 List of all authorized operational locations
 export const OFFICE_LOCATIONS = [
   {
@@ -118,6 +146,30 @@ export const OFFICE_LOCATIONS = [
     latitude: 15.16864,
     longitude: 76.85019,
     radiusInMeters: 50,
+  },
+  {
+    name: 'Paiyanur Branch (Tamil Nadu)',
+    latitude: 12.647998,
+    longitude: 80.174428,
+    radiusInMeters: 100,
+  },
+  {
+    name: 'Karunguzhipallam Branch (Tamil Nadu)',
+    latitude: 12.656691,
+    longitude: 80.178922,
+    radiusInMeters: 100,
+  },
+  {
+    name: 'Central Telecom Society (Bengaluru)',
+    latitude: 13.160236,
+    longitude: 77.636901,
+    radiusInMeters: 50,
+  },
+  {
+    name: 'Chikkaballapur Branch (Karnataka)',
+    latitude: 13.395601,
+    longitude: 77.732479,
+    radiusInMeters:100,
   },
 ];
 
