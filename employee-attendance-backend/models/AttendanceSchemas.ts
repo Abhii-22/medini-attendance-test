@@ -10,7 +10,7 @@ export interface IEmployeeProfile extends Document {
   email: string;
   password?: string;
   role: string[];
-  lunchBreakMinutes?: number; // 🍱 LUNCH BREAK MINUTES FIELD
+  lunchBreakMinutes?: number; 
 }
 
 export interface IAttendanceShiftLog extends Document {
@@ -23,7 +23,7 @@ export interface IAttendanceShiftLog extends Document {
   capturedPhotoInUri: string;
   capturedPhotoOutUri: string;
   locationInAddress: string;   
-  locationOutAddress: string;  
+  locationOutAddress: string;   
 }
 
 export interface IAdminCredential extends Document {
@@ -33,6 +33,13 @@ export interface IAdminCredential extends Document {
   email: string;
   password?: string;
   role: string;
+}
+
+export interface IOfficeLocation extends Document {
+  name: string;
+  latitude: number;
+  longitude: number;
+  radiusInMeters: number;
 }
 
 // ----------------------------------------------------
@@ -45,7 +52,7 @@ const EmployeeProfileSchema = new Schema<IEmployeeProfile>({
   email: { type: String, required: true, unique: true, lowercase: true, trim: true },
   password: { type: String, required: true },
   role: { type: [String], default: ['EMPLOYEE'] },
-  lunchBreakMinutes: { type: Number, default: 0 } // 🍱 MONGOOSE SCHEMA PROPERTY FOR LUNCH DURATION
+  lunchBreakMinutes: { type: Number, default: 0 }
 }, { timestamps: true });
 
 // ----------------------------------------------------
@@ -77,6 +84,16 @@ const AdminCredentialSchema = new Schema<IAdminCredential>({
 }, { timestamps: true });
 
 // ----------------------------------------------------
+// 4. OFFICE LOCATION SCHEMA
+// ----------------------------------------------------
+const OfficeLocationSchema = new Schema<IOfficeLocation>({
+  name: { type: String, required: true },
+  latitude: { type: Number, required: true },
+  longitude: { type: Number, required: true },
+  radiusInMeters: { type: Number, required: true, default: 50 }
+}, { timestamps: true });
+
+// ----------------------------------------------------
 // MODEL EXPORTS
 // ----------------------------------------------------
 export const RegisteredEmployee = (mongoose.models.RegisteredEmployee || 
@@ -87,3 +104,6 @@ export const AttendanceShiftLog = (mongoose.models.AttendanceShiftLog ||
 
 export const AdminCredential = (mongoose.models.AdminCredential || 
   mongoose.model<IAdminCredential>('AdminCredential', AdminCredentialSchema)) as Model<IAdminCredential>;
+
+export const OfficeLocation = (mongoose.models.OfficeLocation || 
+  mongoose.model<IOfficeLocation>('OfficeLocation', OfficeLocationSchema)) as Model<IOfficeLocation>;

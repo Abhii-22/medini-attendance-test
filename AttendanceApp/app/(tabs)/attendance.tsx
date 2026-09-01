@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator, Alert, Image, Dimensions, ScrollView, Modal } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Location from 'expo-location';
-import { OFFICE_LOCATIONS, isUserWithinAnyOffice } from '@/constants/Location';
+import { calculateHaversineDistance } from '@/constants/Location';
 import { useAttendance } from '@/constants/AttendanceContext';
 import { useAuth, API_BASE_URL } from '../_layout'; 
 import { Ionicons, MaterialIcons, FontAwesome5 } from '@expo/vector-icons';
@@ -150,7 +150,7 @@ export default function AttendanceScreen() {
     setMatchedOfficeName('');
     setLocationAddress('');
     setIsMocked(false);
-    setLoadingMessage('Acquiring precise satellite location...');
+    setLoadingMessage('Acquiring precise satellite location & geofences...');
 
     try {
       const { status: locStatus } = await Location.requestForegroundPermissionsAsync();
@@ -191,6 +191,29 @@ export default function AttendanceScreen() {
         return;
       }
 
+      // 🌐 FETCH AUTHORIZED OFFICE LOCATIONS DYNAMICALLY FROM DATABASE
+      const locResponse = await fetch(`${API_BASE_URL}/admin/locations`);
+      const dynamicOfficeLocations = await locResponse.json();
+
+      let isInsideAny = false;
+      let matchedOffice = '';
+      let closestDistance = Infinity;
+
+      for (const office of dynamicOfficeLocations) {
+        const distance = calculateHaversineDistance(
+          position.coords.latitude,
+          position.coords.longitude,
+          office.latitude,
+          office.longitude
+        );
+        if (distance <= office.radiusInMeters) {
+          isInsideAny = true;
+          matchedOffice = office.name;
+          closestDistance = distance;
+          break;
+        }
+      }
+
       const now = new Date();
       const dateStr = now.toLocaleDateString('en-GB');
       const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -218,12 +241,11 @@ export default function AttendanceScreen() {
         setLocationAddress(fallbackCoords);
       }
 
-      const geofenceResult = isUserWithinAnyOffice(position.coords.latitude, position.coords.longitude);
       const locationAccuracy = position?.coords?.accuracy ?? 0;
 
-      if (geofenceResult.isInside || locationAccuracy > 100) {
-        setCurrentDistance(geofenceResult.distance);
-        setMatchedOfficeName(geofenceResult.matchedOffice || 'Authorized Office Node');
+      if (isInsideAny || locationAccuracy > 100) {
+        setCurrentDistance(closestDistance === Infinity ? 0 : closestDistance);
+        setMatchedOfficeName(matchedOffice || 'Authorized Office Node');
         setIsLocationVerified(true);
         setShowCamera(true);
       } else {
@@ -405,7 +427,7 @@ export default function AttendanceScreen() {
               <Text style={styles.perimeterTitle}>
                 {matchedOfficeName || 'Authorized Operational Nodes'}
               </Text>
-              <Text style={styles.perimeterSub}>Multi-Branch Radius Geofence Active</Text>
+              <Text style={styles.perimeterSub}>Dynamic Multi-Branch Radius Geofence Active</Text>
             </View>
           </View>
 
@@ -655,10 +677,10 @@ const styles = StyleSheet.create({
   premiumSubmitBtnText: { color: '#FFF', fontSize: 14, fontWeight: '700' },
   premiumRetakeBtn: { borderColor: '#CBD5E0', borderWidth: 1, width: '40%', paddingVertical: 14, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF', flexDirection: 'row' },
   premiumRetakeBtnText: { color: '#4A5568', fontSize: 14, fontWeight: '600' },
+  modernLoaderConnection: { paddingVertical: 40, justifyContent: 'center', alignItems: 'center', width: '100%' },
   modernLoaderContainer: { paddingVertical: 40, justifyContent: 'center', alignItems: 'center', width: '100%' },
   modernLoaderText: { color: '#718096', fontSize: 12, marginTop: 10, fontWeight: '600' },
 
-  /* 🛑 MODAL STYLES */
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(26, 32, 44, 0.75)', justifyContent: 'center', alignItems: 'center', padding: 20 },
   modalCardContainer: { width: '100%', maxWidth: 340, backgroundColor: '#FFFFFF', borderRadius: 24, padding: 20, alignItems: 'center', borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.15, shadowRadius: 20, elevation: 8 },
   modalIconCircle: { width: 56, height: 56, borderRadius: 28, backgroundColor: '#FFF5F5', justifyContent: 'center', alignItems: 'center', marginBottom: 14, borderWidth: 1, borderColor: '#FED7D7' },

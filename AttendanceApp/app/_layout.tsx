@@ -5,8 +5,8 @@ import { View, ActivityIndicator } from 'react-native';
 import { AttendanceProvider } from '@/constants/AttendanceContext';
 
 // 🌐 Global Production Cloud URL for your hosted Render Web Service API
-// export const API_BASE_URL = 'http://10.117.158.130:5000/api';
-export const API_BASE_URL = 'https://attentdanceapi.techvruddhi.com/api';
+export const API_BASE_URL = 'http://192.168.1.13:5000/api';
+// export const API_BASE_URL = 'https://attentdanceapi.techvruddhi.com/api';
 
 interface AuthContextType {
   isAuthenticated: boolean;

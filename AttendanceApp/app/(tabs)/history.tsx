@@ -34,6 +34,16 @@ export default function HistoryScreen() {
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
 
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  
+  // 📅 Monthly Filter States (matching Admin Page)
+  const currentMonthName = new Date().toLocaleDateString('en-US', { month: 'long' });
+  const [selectedMonthFilter, setSelectedMonthFilter] = useState<string>(currentMonthName);
+
+  const availableMonths = [
+    'January', 'February', 'March', 'April', 'May', 'June', 
+    'July', 'August', 'September', 'October', 'November', 'December'
+  ];
+
   const [isCalendarVisible, setIsCalendarVisible] = useState<boolean>(false);
   const [calendarViewDate, setCalendarViewDate] = useState<Date>(new Date());
 
@@ -157,11 +167,21 @@ export default function HistoryScreen() {
     setIsCalendarVisible(false);
   };
 
+  // 🔍 Filter logs based on selected specific date or monthly filter strip
   const filteredLogs = cloudLogs.filter((item) => {
-    if (!selectedDate) return true;
     if (!item.date) return false;
+    const currentYearString = new Date().getFullYear().toString();
+    const logDateLower = item.date.toLowerCase();
 
-    return item.date.trim().toLowerCase().includes(selectedDate.trim().toLowerCase());
+    // If an exact day is picked from calendar, filter by that exact day
+    if (selectedDate) {
+      return logDateLower.includes(selectedDate.trim().toLowerCase());
+    }
+
+    // Otherwise, filter by selected month and current year
+    const matchesMonth = logDateLower.includes(selectedMonthFilter.toLowerCase());
+    const matchesYear = logDateLower.includes(currentYearString);
+    return matchesMonth && matchesYear;
   });
 
   const handleToggleDrawer = (id: string) => {
@@ -202,6 +222,25 @@ export default function HistoryScreen() {
         </TouchableOpacity>
       </View>
 
+      {/* 📅 MONTHLY FILTER STRIP (Matches Admin Page) */}
+      <View style={styles.sectionHeaderRowInline}>
+        <Ionicons name="calendar-outline" size={14} color="#2B6CB0" />
+        <Text style={styles.sectionHeadingLabelInline}>Select Tracking Month ({new Date().getFullYear()})</Text>
+      </View>
+      <View style={styles.pillScrollFrame}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          {availableMonths.map((mName) => (
+            <TouchableOpacity 
+              key={mName} 
+              style={[styles.monthFilterPill, selectedMonthFilter === mName && styles.activeMonthFilterPill]} 
+              onPress={() => { setSelectedMonthFilter(mName); setSelectedDate(null); }}
+            >
+              <Text style={[styles.monthFilterPillText, selectedMonthFilter === mName && styles.activeMonthFilterPillText]}>📅 {mName}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+
       <View style={styles.calendarFilterBarContainer}>
         <TouchableOpacity 
           style={styles.calendarPickerBtn}
@@ -210,7 +249,7 @@ export default function HistoryScreen() {
         >
           <Ionicons name="calendar-sharp" size={18} color="#007AFF" style={{ marginRight: 8 }} />
           <Text style={[styles.calendarPickerBtnText, selectedDate && styles.calendarPickerSelectedText]}>
-            {selectedDate ? `Date: ${selectedDate}` : 'Select Date from Calendar'}
+            {selectedDate ? `Exact Date Filter: ${selectedDate}` : 'Or Pick Exact Date from Calendar'}
           </Text>
         </TouchableOpacity>
 
@@ -235,7 +274,7 @@ export default function HistoryScreen() {
             <Ionicons name="calendar-outline" size={24} color="#718096" />
           </View>
           <Text style={styles.emptyText}>
-            {selectedDate ? `No attendance logs recorded for ${selectedDate}.` : 'No active history logs available.'}
+            {selectedDate ? `No attendance logs recorded for ${selectedDate}.` : `No active history logs available for ${selectedMonthFilter}.`}
           </Text>
         </View>
       ) : (
@@ -422,7 +461,7 @@ export default function HistoryScreen() {
                   style={styles.calResetBtn} 
                   onPress={() => { setSelectedDate(null); setIsCalendarVisible(false); }}
                 >
-                  <Text style={styles.calResetBtnText}>Show All Logs</Text>
+                  <Text style={styles.calResetBtnText}>Clear Date Filter</Text>
                 </TouchableOpacity>
               )}
               
@@ -486,9 +525,18 @@ const styles = StyleSheet.create({
   sectionTitle: { fontSize: 14, fontWeight: '800', color: '#1A202C', marginLeft: 6, textTransform: 'uppercase', letterSpacing: 0.3 },
   refreshIconBtn: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E2E8F0', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 10, flexDirection: 'row', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.01, shadowRadius: 2, elevation: 1 },
   refreshIconText: { color: '#4A5568', fontSize: 11, fontWeight: '700' },
+  
+  sectionHeaderRowInline: { flexDirection: 'row', alignItems: 'center', marginBottom: 6, paddingLeft: 2 },
+  sectionHeadingLabelInline: { fontSize: 11, fontWeight: '800', color: '#4A5568', textTransform: 'uppercase', letterSpacing: 0.5, marginLeft: 6 },
+  pillScrollFrame: { maxHeight: 40, marginBottom: 10 },
+  monthFilterPill: { backgroundColor: '#EDF2F7', paddingHorizontal: 14, justifyContent: 'center', alignItems: 'center', borderRadius: 14, marginRight: 6, height: 34, borderWidth: 1, borderColor: '#E2E8F0' },
+  activeMonthFilterPill: { backgroundColor: '#805AD5', borderColor: '#805AD5' },
+  monthFilterPillText: { fontSize: 11, color: '#4A5568', fontWeight: '700' },
+  activeMonthFilterPillText: { color: '#FFFFFF' },
+
   calendarFilterBarContainer: { flexDirection: 'row', alignItems: 'center', marginBottom: 14 },
-  calendarPickerBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', borderRadius: 14, paddingHorizontal: 14, height: 44, borderWidth: 1, borderColor: '#CBD5E0', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.02, shadowRadius: 3, elevation: 1 },
-  calendarPickerBtnText: { fontSize: 13, color: '#718096', fontWeight: '600' },
+  calendarPickerBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', borderRadius: 14, paddingHorizontal: 14, height: 42, borderWidth: 1, borderColor: '#CBD5E0', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.02, shadowRadius: 3, elevation: 1 },
+  calendarPickerBtnText: { fontSize: 12, color: '#718096', fontWeight: '600' },
   calendarPickerSelectedText: { color: '#007AFF', fontWeight: '800' },
   clearDateFilterBtn: { marginLeft: 8, padding: 4 },
   calendarModalCard: { width: '100%', maxWidth: 350, backgroundColor: '#FFFFFF', borderRadius: 24, padding: 18, borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.25, shadowRadius: 15, elevation: 10 },

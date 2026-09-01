@@ -1,5 +1,5 @@
 import type { Request, Response } from 'express';
-import { RegisteredEmployee, AttendanceShiftLog } from '../models/AttendanceSchemas.js';
+import { RegisteredEmployee, AttendanceShiftLog, OfficeLocation } from '../models/AttendanceSchemas.js';
 
 export const registerEmployee = async (req: Request, res: Response): Promise<any> => {
   const { email, employeeId, name, designation, password, role, lunchBreakMinutes } = req.body;
@@ -209,5 +209,79 @@ export const downloadAttendance = async (req: Request, res: Response): Promise<a
 
   } catch (err) {
     return res.status(500).json({ success: false, message: "Spreadsheet compilation failure.", error: err });
+  }
+};
+
+// --- DYNAMIC OFFICE LOCATION MANAGEMENT CONTROLLERS ---
+
+export const getOfficeLocations = async (_req: Request, res: Response) => {
+  try {
+    const locations = await OfficeLocation.find().sort({ createdAt: -1 });
+    return res.status(200).json(locations);
+  } catch (err: any) {
+    return res.status(500).json({ success: false, message: 'Failed to fetch locations', error: err.message });
+  }
+};
+
+export const addOfficeLocation = async (req: Request, res: Response): Promise<any> => {
+  const { name, latitude, longitude, radiusInMeters } = req.body;
+
+  if (!name || latitude === undefined || longitude === undefined) {
+    return res.status(400).json({ success: false, message: 'Branch Name, Latitude, and Longitude are required.' });
+  }
+
+  try {
+    const newLocation = new OfficeLocation({
+      name: name.trim(),
+      latitude: Number(latitude),
+      longitude: Number(longitude),
+      radiusInMeters: radiusInMeters ? Number(radiusInMeters) : 50
+    });
+
+    await newLocation.save();
+    return res.status(201).json({ success: true, message: 'Office location added successfully!', location: newLocation });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, message: 'Failed to add office location.', error: err.message });
+  }
+};
+
+export const updateOfficeLocation = async (req: Request, res: Response): Promise<any> => {
+  const targetId = req.params.id;
+  const { name, latitude, longitude, radiusInMeters } = req.body;
+
+  if (!targetId) {
+    return res.status(400).json({ success: false, message: 'Missing location document reference identifier.' });
+  }
+
+  try {
+    const updatePayload: any = {};
+    if (name) updatePayload.name = name.trim();
+    if (latitude !== undefined) updatePayload.latitude = Number(latitude);
+    if (longitude !== undefined) updatePayload.longitude = Number(longitude);
+    if (radiusInMeters !== undefined) updatePayload.radiusInMeters = Number(radiusInMeters);
+
+    const updatedLocation = await OfficeLocation.findByIdAndUpdate(targetId, updatePayload, { new: true, runValidators: true });
+
+    if (!updatedLocation) {
+      return res.status(404).json({ success: false, message: 'Office location record not found.' });
+    }
+
+    return res.status(200).json({ success: true, message: 'Office location updated successfully!', location: updatedLocation });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, message: 'Failed to update office location.', error: err.message });
+  }
+};
+
+export const deleteOfficeLocation = async (req: Request, res: Response): Promise<any> => {
+  const targetId = req.params.id;
+
+  try {
+    const deletedLocation = await OfficeLocation.findByIdAndDelete(targetId);
+    if (!deletedLocation) {
+      return res.status(404).json({ success: false, message: 'Location record not found.' });
+    }
+    return res.status(200).json({ success: true, message: 'Office location deleted successfully.' });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, message: 'Failed to delete location.', error: err.message });
   }
 };

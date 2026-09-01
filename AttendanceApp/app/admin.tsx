@@ -24,10 +24,18 @@ interface AttendanceRecord {
   logoutTime: string;
 }
 
+interface OfficeLocationItem {
+  _id: string;
+  name: string;
+  latitude: number;
+  longitude: number;
+  radiusInMeters: number;
+}
+
 export default function AdminScreen() {
   const { logout } = useAuth();
 
-  const [activeTab, setActiveTab] = useState<'REGISTER' | 'LOGS'>('REGISTER');
+  const [activeTab, setActiveTab] = useState<'REGISTER' | 'LOGS' | 'LOCATIONS'>('REGISTER');
   const [selectedEmpFilter, setSelectedEmpFilter] = useState<string>('ALL');
   
   const currentMonthName = new Date().toLocaleDateString('en-US', { month: 'long' }); 
@@ -36,12 +44,23 @@ export default function AdminScreen() {
   const [isEditing, setIsEditing] = useState<boolean>(false);
   const [editingTargetId, setEditingTargetId] = useState<string | null>(null);
 
+  // 📍 Location Edit States
+  const [isEditingLocation, setIsEditingLocation] = useState<boolean>(false);
+  const [editingLocationId, setEditingLocationId] = useState<string | null>(null);
+
   const [employees, setEmployees] = useState<EmployeeProfile[]>([]);
   const [attendanceLogs, setAttendanceLogs] = useState<AttendanceRecord[]>([]);
+  const [officeLocations, setOfficeLocations] = useState<OfficeLocationItem[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
   const [empSearchQuery, setEmpSearchQuery] = useState<string>('');
   const [logSearchQuery, setLogSearchQuery] = useState<string>('');
+
+  // Location form states
+  const [locName, setLocName] = useState('');
+  const [locLat, setLocLat] = useState('');
+  const [locLng, setLocLng] = useState('');
+  const [locRadius, setLocRadius] = useState('50');
 
   const [empName, setEmpName] = useState('');
   const [empIdCode, setEmpIdCode] = useState('');
@@ -128,6 +147,18 @@ export default function AdminScreen() {
     }
   };
 
+  const fetchOfficeLocations = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/admin/locations`);
+      if (response.ok) {
+        const data = await response.json();
+        setOfficeLocations(data);
+      }
+    } catch (error) {
+      console.error('Failed fetching office locations:', error);
+    }
+  };
+
   const fetchAttendanceLogs = async (filterName: string) => {
     try {
       setIsLoading(true);
@@ -145,6 +176,7 @@ export default function AdminScreen() {
 
   useEffect(() => {
     fetchEmployeesList();
+    fetchOfficeLocations();
     if (activeTab === 'LOGS') {
       fetchAttendanceLogs(selectedEmpFilter);
     }
@@ -257,6 +289,73 @@ export default function AdminScreen() {
     executeServerProvisioning(payload, adminName.trim());
   };
 
+  const handleCreateLocationSubmit = async () => {
+    if (!locName || !locLat || !locLng) {
+      Alert.alert('Missing Fields', 'Please fill out Branch Name, Latitude, and Longitude.');
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      let response;
+
+      if (isEditingLocation && editingLocationId) {
+        response = await fetch(`${API_BASE_URL}/admin/locations/${editingLocationId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: locName.trim(),
+            latitude: Number(locLat),
+            longitude: Number(locLng),
+            radiusInMeters: Number(locRadius) || 50
+          })
+        });
+      } else {
+        response = await fetch(`${API_BASE_URL}/admin/locations`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: locName.trim(),
+            latitude: Number(locLat),
+            longitude: Number(locLng),
+            radiusInMeters: Number(locRadius) || 50
+          })
+        });
+      }
+
+      const result = await response.json();
+      if (response.ok && (result.success || result._id)) {
+        Alert.alert('Success 🎉', isEditingLocation ? 'Branch updated successfully!' : 'New office branch deployed successfully!');
+        clearLocationFormStates();
+        fetchOfficeLocations();
+      } else {
+        Alert.alert('Operation Denied', result.message || 'Error processing location data.');
+      }
+    } catch (error) {
+      Alert.alert('Connection Error', 'Failed to communicate with database server.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSelectEditLocation = (item: OfficeLocationItem) => {
+    setIsEditingLocation(true);
+    setEditingLocationId(item._id);
+    setLocName(item.name);
+    setLocLat(String(item.latitude));
+    setLocLng(String(item.longitude));
+    setLocRadius(String(item.radiusInMeters || 50));
+  };
+
+  const clearLocationFormStates = () => {
+    setIsEditingLocation(false);
+    setEditingLocationId(null);
+    setLocName('');
+    setLocLat('');
+    setLocLng('');
+    setLocRadius('50');
+  };
+
   const executeServerProvisioning = async (payload: any, targetedName: string) => {
     try {
       setIsLoading(true);
@@ -344,6 +443,31 @@ export default function AdminScreen() {
     );
   };
 
+  const handleDeleteLocationTrigger = (id: string, nameString: string) => {
+    Alert.alert(
+      'Remove Branch ⚠️',
+      `Are you sure you want to remove ${nameString} from active geofences?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const response = await fetch(`${API_BASE_URL}/admin/locations/${id}`, { method: 'DELETE' });
+              if (response.ok) {
+                Alert.alert('Deleted', 'Branch removed successfully.');
+                fetchOfficeLocations();
+              }
+            } catch (err) {
+              Alert.alert('System Error', 'Failed to delete location.');
+            }
+          }
+        }
+      ]
+    );
+  };
+
   const clearAllFormStates = () => {
     setIsEditing(false);
     setEditingTargetId(null);
@@ -394,25 +518,24 @@ export default function AdminScreen() {
           </Text>
           <Text style={styles.statBoxLabel}>Total Staff Profiles</Text>
         </View>
-        <View style={[styles.statBoxSummary, { borderLeftColor: '#805AD5' }]}>
-          <Text style={styles.statBoxNumber}>
-            {employees.filter(e => {
-              const r: string[] = Array.isArray(e.role) ? e.role : [e.role || 'EMPLOYEE'];
-              return r.includes('ADMIN_VIEW');
-            }).length}
-          </Text>
-          <Text style={styles.statBoxLabel}>Admin View Supervisors</Text>
+        <View style={[styles.statBoxSummary, { borderLeftColor: '#38A169' }]}>
+          <Text style={styles.statBoxNumber}>{officeLocations.length}</Text>
+          <Text style={styles.statBoxLabel}>Active Office Geofences</Text>
         </View>
       </View>
 
       <View style={styles.menuToggleRow}>
         <TouchableOpacity style={[styles.menuTab, activeTab === 'REGISTER' && styles.activeMenuTab]} onPress={() => { setActiveTab('REGISTER'); clearAllFormStates(); }}>
-          <Ionicons name="person-add-outline" size={14} color={activeTab === 'REGISTER' ? '#007AFF' : '#718096'} style={{ marginRight: 6 }} />
-          <Text style={[styles.menuTabText, activeTab === 'REGISTER' && styles.activeMenuTabText]}>Provisioning Workspace</Text>
+          <Ionicons name="person-add-outline" size={13} color={activeTab === 'REGISTER' ? '#007AFF' : '#718096'} style={{ marginRight: 4 }} />
+          <Text style={[styles.menuTabText, activeTab === 'REGISTER' && styles.activeMenuTabText]}>Provisioning</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.menuTab, activeTab === 'LOCATIONS' && styles.activeMenuTab]} onPress={() => { setActiveTab('LOCATIONS'); clearLocationFormStates(); }}>
+          <Ionicons name="location-outline" size={13} color={activeTab === 'LOCATIONS' ? '#007AFF' : '#718096'} style={{ marginRight: 4 }} />
+          <Text style={[styles.menuTabText, activeTab === 'LOCATIONS' && styles.activeMenuTabText]}>Locations</Text>
         </TouchableOpacity>
         <TouchableOpacity style={[styles.menuTab, activeTab === 'LOGS' && styles.activeMenuTab]} onPress={() => setActiveTab('LOGS')}>
-          <Ionicons name="newspaper-outline" size={14} color={activeTab === 'LOGS' ? '#007AFF' : '#718096'} style={{ marginRight: 6 }} />
-          <Text style={[styles.menuTabText, activeTab === 'LOGS' && styles.activeMenuTabText]}>Master Logs Sheet</Text>
+          <Ionicons name="newspaper-outline" size={13} color={activeTab === 'LOGS' ? '#007AFF' : '#718096'} style={{ marginRight: 4 }} />
+          <Text style={[styles.menuTabText, activeTab === 'LOGS' && styles.activeMenuTabText]}>Logs Sheet</Text>
         </TouchableOpacity>
       </View>
 
@@ -638,6 +761,81 @@ export default function AdminScreen() {
         </ScrollView>
       )}
 
+      {activeTab === 'LOCATIONS' && (
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
+          <View style={styles.formCard}>
+            <View style={styles.cardHeaderRow}>
+              <Ionicons name="location-outline" size={16} color="#38A169" />
+              <Text style={[styles.sectionHeading, { color: '#38A169' }]}>
+                {isEditingLocation ? 'Edit Office Branch Geofence' : 'Add New Office Branch Geofence'}
+              </Text>
+            </View>
+
+            <Text style={styles.inputLabel}>Branch Name & Address Descriptor</Text>
+            <TextInput style={styles.input} value={locName} onChangeText={setLocName} placeholder="e.g. Bengaluru Main Office" placeholderTextColor="#A0AEC0" />
+
+            <View style={styles.inlineInputsRow}>
+              <View style={{ width: '48%' }}>
+                <Text style={styles.inputLabel}>Latitude</Text>
+                <TextInput style={styles.input} value={locLat} onChangeText={setLocLat} placeholder="12.97087" placeholderTextColor="#A0AEC0" keyboardType="numeric" />
+              </View>
+              <View style={{ width: '48%' }}>
+                <Text style={styles.inputLabel}>Longitude</Text>
+                <TextInput style={styles.input} value={locLng} onChangeText={setLocLng} placeholder="77.53661" placeholderTextColor="#A0AEC0" keyboardType="numeric" />
+              </View>
+            </View>
+
+            <Text style={styles.inputLabel}>Allowed Radius (in meters)</Text>
+            <TextInput style={styles.input} value={locRadius} onChangeText={setLocRadius} placeholder="50" placeholderTextColor="#A0AEC0" keyboardType="numeric" />
+
+            <View style={styles.formActionBtnGroup}>
+              <TouchableOpacity style={[styles.submitButton, { backgroundColor: '#38A169', flex: 1 }]} onPress={handleCreateLocationSubmit}>
+                <Ionicons name={isEditingLocation ? "checkmark-circle-outline" : "add-circle-outline"} size={15} color="#FFFFFF" style={{ marginRight: 6 }} />
+                <Text style={styles.submitButtonText}>{isEditingLocation ? 'Save Location Changes' : 'Deploy Branch Geofence'}</Text>
+              </TouchableOpacity>
+              {isEditingLocation && (
+                <TouchableOpacity style={styles.cancelEditBtn} onPress={clearLocationFormStates}>
+                  <Text style={styles.cancelEditBtnText}>Cancel</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+
+          <View style={styles.sectionHeaderRowInline}>
+            <Ionicons name="business-outline" size={15} color="#2B6CB0" />
+            <Text style={styles.sectionHeadingLabelInline}>Active Office Locations Directory</Text>
+          </View>
+
+          <View style={styles.directoryCard}>
+            {officeLocations.length === 0 ? (
+              <Text style={styles.emptyTextSub}>No office locations configured in database.</Text>
+            ) : (
+              officeLocations.map((loc) => (
+                <View key={loc._id} style={styles.employeeRowItem}>
+                  <View style={[styles.avatarCircle, { backgroundColor: '#F0FDF4', borderColor: '#BBF7D0' }]}>
+                    <Ionicons name="location" size={16} color="#16A34A" />
+                  </View>
+                  <View style={styles.employeeInfoBox}>
+                    <Text style={styles.empRowName}>{loc.name}</Text>
+                    <Text style={styles.empRowSub}>
+                      Lat: {loc.latitude} • Lng: {loc.longitude} • <Text style={{ fontWeight: '800' }}>{loc.radiusInMeters}m Radius</Text>
+                    </Text>
+                  </View>
+                  <View style={styles.crudActionRow}>
+                    <TouchableOpacity style={styles.actionPillEdit} onPress={() => handleSelectEditLocation(loc)}>
+                      <Text style={styles.actionPillTextEdit}>Edit</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.actionPillDelete} onPress={() => handleDeleteLocationTrigger(loc._id, loc.name)}>
+                      <Text style={styles.actionPillTextDelete}>Remove</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ))
+            )}
+          </View>
+        </ScrollView>
+      )}
+
       {activeTab === 'LOGS' && (
         <View style={{ flex: 1 }}>
           <View style={styles.sectionHeaderRowInline}>
@@ -840,7 +1038,7 @@ const styles = StyleSheet.create({
   menuToggleRow: { flexDirection: 'row', backgroundColor: '#E2E8F0', padding: 4, borderRadius: 14, marginBottom: 18 },
   menuTab: { flex: 1, paddingVertical: 12, alignItems: 'center', borderRadius: 10, flexDirection: 'row', justifyContent: 'center' },
   activeMenuTab: { backgroundColor: '#FFFFFF', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 2 },
-  menuTabText: { fontSize: 12, fontWeight: '700', color: '#718096' },
+  menuTabText: { fontSize: 11, fontWeight: '700', color: '#718096' },
   activeMenuTabText: { color: '#007AFF' },
   formCard: { backgroundColor: '#FFFFFF', padding: 16, borderRadius: 16, marginBottom: 16, borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.01, shadowRadius: 4, elevation: 1 },
   cardHeaderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
