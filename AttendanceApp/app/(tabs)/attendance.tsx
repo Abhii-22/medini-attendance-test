@@ -6,12 +6,14 @@ import { calculateHaversineDistance } from '@/constants/Location';
 import { useAttendance } from '@/constants/AttendanceContext';
 import { useAuth, API_BASE_URL } from '../_layout'; 
 import { Ionicons, MaterialIcons, FontAwesome5 } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const { width } = Dimensions.get('window');
 
 export default function AttendanceScreen() {
   const { currentUser } = useAuth(); 
   const { addPunch } = useAttendance();
+  const insets = useSafeAreaInsets();
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [loading, setLoading] = useState<boolean>(false);
   const [loadingMessage, setLoadingMessage] = useState<string>('');
@@ -382,8 +384,8 @@ export default function AttendanceScreen() {
     <View style={{ flex: 1, backgroundColor: '#F4F7FA' }}>
       {showCamera ? (
         <View style={styles.cameraContainer}>
-          <CameraView style={StyleSheet.absoluteFillObject} facing="front" ref={cameraRef} />
-          <View style={[StyleSheet.absoluteFillObject, styles.cameraOverlay]}>
+          <CameraView style={StyleSheet.absoluteFill} facing="front" ref={cameraRef} />
+          <View style={[StyleSheet.absoluteFill, styles.cameraOverlay, { paddingTop: insets.top + 20, paddingBottom: insets.bottom + 20 }]}>
             <View style={styles.topInfoBar}>
               <Text style={styles.topBarText}>Verification Profile: {attendanceType}</Text>
             </View>
@@ -407,8 +409,18 @@ export default function AttendanceScreen() {
           </View>
         </View>
       ) : (
-        <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
+        <ScrollView 
+          style={[styles.container, { paddingTop: insets.top + 16 }]} 
+          contentContainerStyle={{ paddingBottom: insets.bottom + 40, flexGrow: 1 }} 
+          showsVerticalScrollIndicator={false}
+        >
           
+          {/* 🏷️ SCREEN TITLE HEADER */}
+          <View style={styles.screenTitleRow}>
+            <Text style={styles.screenTitleText}>Mark Attendance</Text>
+            <Text style={styles.screenSubtitleText}>Verify location and capture your selfie to punch</Text>
+          </View>
+
           <View style={styles.executiveHeaderCard}>
             <View style={styles.avatarBadge}>
               <Text style={styles.avatarText}>{employeeName.charAt(0).toUpperCase()}</Text>
@@ -613,7 +625,10 @@ export default function AttendanceScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F4F7FA', paddingHorizontal: 16, paddingTop: 16 },
+  container: { flex: 1, backgroundColor: '#F4F7FA', paddingHorizontal: 16 },
+  screenTitleRow: { marginBottom: 16, paddingLeft: 2 },
+  screenTitleText: { fontSize: 26, fontWeight: '800', color: '#1A202C', letterSpacing: 0.2 },
+  screenSubtitleText: { fontSize: 13, fontWeight: '600', color: '#718096', marginTop: 2 },
   executiveHeaderCard: { backgroundColor: '#FFFFFF', padding: 16, borderRadius: 20, flexDirection: 'row', alignItems: 'center', shadowColor: '#1A202C', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.02, shadowRadius: 8, elevation: 2, marginBottom: 14, borderWidth: 1, borderColor: '#E2E8F0' },
   avatarBadge: { width: 46, height: 44, borderRadius: 14, backgroundColor: '#EBF4FF', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#B3D7FF' },
   avatarText: { color: '#007AFF', fontSize: 18, fontWeight: '800' },
@@ -643,7 +658,7 @@ const styles = StyleSheet.create({
   absentButtonDisabled: { backgroundColor: '#EDF2F7', borderColor: '#CBD5E0', opacity: 0.8 },
   absentButtonText: { color: '#E53E3E', fontSize: 13, fontWeight: '700' },
   cameraContainer: { flex: 1, backgroundColor: '#000' },
-  cameraOverlay: { justifyContent: 'space-between', paddingVertical: 40 },
+  cameraOverlay: { justifyContent: 'space-between' },
   topInfoBar: { width: '100%', alignItems: 'center' },
   topBarText: { color: '#FFF', fontSize: 12, fontWeight: '700', backgroundColor: 'rgba(0,0,0,0.6)', paddingVertical: 6, paddingHorizontal: 16, borderRadius: 20, overflow: 'hidden' },
   reticleContainer: { alignItems: 'center', justifyContent: 'center', flex: 1 },
@@ -677,7 +692,6 @@ const styles = StyleSheet.create({
   premiumSubmitBtnText: { color: '#FFF', fontSize: 14, fontWeight: '700' },
   premiumRetakeBtn: { borderColor: '#CBD5E0', borderWidth: 1, width: '40%', paddingVertical: 14, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF', flexDirection: 'row' },
   premiumRetakeBtnText: { color: '#4A5568', fontSize: 14, fontWeight: '600' },
-  modernLoaderConnection: { paddingVertical: 40, justifyContent: 'center', alignItems: 'center', width: '100%' },
   modernLoaderContainer: { paddingVertical: 40, justifyContent: 'center', alignItems: 'center', width: '100%' },
   modernLoaderText: { color: '#718096', fontSize: 12, marginTop: 10, fontWeight: '600' },
 

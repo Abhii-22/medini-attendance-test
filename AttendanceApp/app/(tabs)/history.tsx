@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { StyleSheet, Text, View, ScrollView, TouchableOpacity, ActivityIndicator, Image, Modal } from 'react-native';
 import { useAuth, API_BASE_URL } from '../_layout';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface BackendLog {
   _id: string;
@@ -28,6 +29,7 @@ interface PhotoModalState {
 
 export default function HistoryScreen() {
   const { currentUser } = useAuth();
+  const insets = useSafeAreaInsets();
   const [cloudLogs, setCloudLogs] = useState<BackendLog[]>([]);
   const [employeeLunchMins, setEmployeeLunchMins] = useState<number>(0);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -210,7 +212,7 @@ export default function HistoryScreen() {
   };
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingTop: insets.top + 16 }]}>
       <View style={styles.headerTitleRow}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <Ionicons name="time-outline" size={18} color="#1A202C" />
@@ -278,7 +280,7 @@ export default function HistoryScreen() {
           </Text>
         </View>
       ) : (
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 30 }}>
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: insets.bottom + 30 }}>
           {filteredLogs.map((item) => {
             const isExpanded = expandedLogId === item._id;
             const hasInPhoto = !!item.capturedPhotoInUri;
@@ -520,7 +522,7 @@ export default function HistoryScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8FAFC', paddingHorizontal: 16, paddingTop: 20 },
+  container: { flex: 1, backgroundColor: '#F8FAFC', paddingHorizontal: 16 },
   headerTitleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   sectionTitle: { fontSize: 14, fontWeight: '800', color: '#1A202C', marginLeft: 6, textTransform: 'uppercase', letterSpacing: 0.3 },
   refreshIconBtn: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E2E8F0', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 10, flexDirection: 'row', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.01, shadowRadius: 2, elevation: 1 },

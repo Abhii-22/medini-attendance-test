@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, ScrollView, RefreshControl, Dimensions, Image } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, ScrollView, RefreshControl, Dimensions, Image, Platform, StatusBar } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth, API_BASE_URL } from '../_layout';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const { width } = Dimensions.get('window');
 
@@ -19,6 +20,7 @@ interface EmployeeProfile {
 export default function HomeScreen() {
   const router = useRouter();
   const { currentUser } = useAuth();
+  const insets = useSafeAreaInsets();
   
   const [presentCount, setPresentCount] = useState<number>(0);
   const [absentCount, setAbsentCount] = useState<number>(0);
@@ -161,18 +163,25 @@ export default function HomeScreen() {
 
   return (
     <ScrollView 
-      style={styles.container} 
+      style={[styles.container, { paddingTop: insets.top + 12 }]} 
       showsVerticalScrollIndicator={false}
-      contentContainerStyle={{ paddingBottom: 40 }}
+      contentContainerStyle={{ paddingBottom: 110, flexGrow: 1 }}
       refreshControl={
         <RefreshControl 
           refreshing={isRefreshing} 
           onRefresh={handlePullToRefresh} 
           colors={["#007AFF"]}
           tintColor="#007AFF"
+          progressViewOffset={insets.top}
         />
       }
     >
+      {/* 🏷️ SCREEN TITLE HEADER */}
+      <View style={styles.screenTitleRow}>
+        <Text style={styles.screenTitleText}>Dashboard</Text>
+        <Text style={styles.screenSubtitleText}>Your attendance overview at a glance</Text>
+      </View>
+
       {/* 🟦 HEADER HERO CARD WITH PROPERLY FITTED MEDINI LOGO */}
       <View style={styles.dashboardHeroCard}>
         <View style={styles.heroHeaderRow}>
@@ -315,8 +324,11 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8FAFC', paddingHorizontal: 16, paddingTop: 20 },
-  dashboardHeroCard: { backgroundColor: '#007AFF', padding: 20, borderRadius: 20, shadowColor: '#007AFF', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.12, shadowRadius: 12, elevation: 3, marginBottom: 20 },
+  container: { flex: 1, backgroundColor: '#F8FAFC', paddingHorizontal: 16 },
+  screenTitleRow: { marginBottom: 16, paddingLeft: 2 },
+  screenTitleText: { fontSize: 26, fontWeight: '800', color: '#1A202C', letterSpacing: 0.2 },
+  screenSubtitleText: { fontSize: 13, fontWeight: '600', color: '#718096', marginTop: 2 },
+  dashboardHeroCard: { backgroundColor: '#007AFF', padding: 20, borderRadius: 20, shadowColor: '#007AFF', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.12, shadowRadius: 12, elevation: 3, marginTop: 10, marginBottom: 20 },
   heroHeaderRow: { flexDirection: 'row', alignItems: 'center' },
   logoBadgeFrame: { width: 68, height: 68, borderRadius: 16, backgroundColor: '#FFFFFF', padding: 6, justifyContent: 'center', alignItems: 'center', marginRight: 14, borderWidth: 1, borderColor: '#E2E8F0', overflow: 'hidden' },
   mediniLogoImage: { width: '100%', height: '100%' },

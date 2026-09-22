@@ -1,12 +1,11 @@
 import React, { useState, createContext, useContext, useEffect } from 'react';
-import { Slot, useRouter, useSegments } from 'expo-router';
+import { Stack, useRouter, useSegments } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { View, ActivityIndicator } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AttendanceProvider } from '@/constants/AttendanceContext';
 
-// 🌐 Global Production Cloud URL for your hosted Render Web Service API
-export const API_BASE_URL = 'http://192.168.1.13:5000/api';
-// export const API_BASE_URL = 'https://attentdanceapi.techvruddhi.com/api';
+export const API_BASE_URL = 'https://attentdanceapi.techvruddhi.com/api';
 
 interface AuthContextType {
   isAuthenticated: boolean;
@@ -38,39 +37,36 @@ function InitialLayoutProtection() {
   useEffect(() => {
     if (!isNavigationReady) return;
 
-    const inTabsGroup = segments[0] === '(tabs)';
-    const inAdminPage = segments[0] === 'admin';
-    const inAdminViewPage = segments[0] === 'adminView';
-    const inLoginPage = segments[0] === 'login';
+    const currentSegment = segments[0] as string;
+
+    const inTabsGroup = currentSegment === '(tabs)';
+    const inAdminPage = currentSegment === 'admin';
+    const inAdminViewPage = currentSegment === 'adminView';
+    const inLoginPage = currentSegment === 'login';
 
     if (!isAuthenticated) {
       if (!inLoginPage) {
-        router.replace('/login');
+        router.replace('/login' as any);
       }
     } else {
-      // 👑 FIXED ROLE PARSING: Safely convert structural Mongoose strings/arrays into unified arrays to support strict authorization lookups
       const rolesArray = currentUser && Array.isArray(currentUser.role)
         ? currentUser.role
         : currentUser?.role
           ? [currentUser.role]
           : [];
 
-      // 👁️ Supervisor Routing Pathway Checks
       if (adminTargetRoute === 'adminView' || rolesArray.includes('ADMIN_VIEW')) {
-        if (!inAdminViewPage) router.replace('/adminView');
+        if (!inAdminViewPage) router.replace('/adminView' as any);
       } 
-      // 🛠️ Master Admin Routing Pathway Checks
       else if (adminTargetRoute === 'admin' || isAdmin || rolesArray.includes('MASTER')) {
-        if (!inAdminPage) router.replace('/admin');
+        if (!inAdminPage) router.replace('/admin' as any);
       } 
-      // 👤 Standard Workforce Routing Pathway Checks
       else {
-        if (!inTabsGroup) router.replace('/(tabs)'); 
+        if (!inTabsGroup) router.replace('/(tabs)' as any); 
       }
     }
   }, [isAuthenticated, isAdmin, adminTargetRoute, currentUser, segments, isNavigationReady]);
 
-  // 🛡️ SAFESTATE LAYOUT GUARD: Prevents rendering cycles from crashing before navigation finishes booting up
   if (!isNavigationReady) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F8FAFC' }}>
@@ -84,7 +80,13 @@ function InitialLayoutProtection() {
     return <LoginScreen />;
   }
 
-  return <Slot />;
+  return (
+    <Stack screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="(tabs)" />
+      <Stack.Screen name="admin" />
+      <Stack.Screen name="adminView" />
+    </Stack>
+  );
 }
 
 export default function RootLayout() {
@@ -94,7 +96,6 @@ export default function RootLayout() {
   const [adminTargetRoute, setAdminTargetRoute] = useState<'admin' | 'adminView' | null>(null);
   const [isInitializing, setIsInitializing] = useState(true);
 
-  // 🔄 Restore saved user session from device storage on app boot
   useEffect(() => {
     const loadStoredSession = async () => {
       try {
@@ -163,10 +164,12 @@ export default function RootLayout() {
   }
 
   return (
-    <AttendanceProvider>
-      <AuthContext.Provider value={{ isAuthenticated, currentUser, isAdmin, adminTargetRoute, login, logout }}>
-        <InitialLayoutProtection />
-      </AuthContext.Provider>
-    </AttendanceProvider>
+    <SafeAreaProvider>
+      <AttendanceProvider>
+        <AuthContext.Provider value={{ isAuthenticated, currentUser, isAdmin, adminTargetRoute, login, logout }}>
+          <InitialLayoutProtection />
+        </AuthContext.Provider>
+      </AttendanceProvider>
+    </SafeAreaProvider>
   );
 }

@@ -2,9 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, ScrollView, Alert } from 'react-native';
 import { useAuth, API_BASE_URL } from '../_layout';
 import { Ionicons, Feather } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function ProfileScreen() {
   const { currentUser, logout } = useAuth();
+  const insets = useSafeAreaInsets();
   const [lunchBreakDisplay, setLunchBreakDisplay] = useState<string>('0 Minutes');
 
   const employeeName = currentUser?.name || 'Employee';
@@ -63,9 +65,9 @@ export default function ProfileScreen() {
 
   return (
     <ScrollView 
-      style={styles.container} 
+      style={[styles.container, { paddingTop: insets.top + 16 }]} 
       showsVerticalScrollIndicator={false} 
-      contentContainerStyle={{ paddingBottom: 40 }}
+      contentContainerStyle={{ paddingBottom: insets.bottom + 120 }}
     >
       
       {/* 🟦 PROFILE AVATAR HERO SECTION */}
@@ -150,7 +152,7 @@ export default function ProfileScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8FAFC', paddingHorizontal: 16, paddingTop: 20 },
+  container: { flex: 1, backgroundColor: '#F8FAFC', paddingHorizontal: 16 },
   
   profileHeroSection: { backgroundColor: '#FFFFFF', paddingVertical: 24, paddingHorizontal: 16, borderRadius: 16, alignItems: 'center', borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.01, shadowRadius: 4, elevation: 1, marginBottom: 20 },
   largeAvatarCircle: { width: 76, height: 76, borderRadius: 38, backgroundColor: '#EBF4FF', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#B3D7FF', marginBottom: 12 },

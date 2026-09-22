@@ -1,80 +1,60 @@
-import { Tabs } from 'expo-router';
 import React from 'react';
+import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Platform } from 'react-native';
 
 export default function TabLayout() {
-  const insets = useSafeAreaInsets();
-
   return (
     <Tabs
       screenOptions={{
+        headerShown: false,
         tabBarActiveTintColor: '#007AFF',
         tabBarInactiveTintColor: '#8E8E93',
-        headerStyle: { backgroundColor: '#FFFFFF' },
-        headerShadowVisible: false,
-        tabBarStyle: { 
-          // 🚀 Dynamically adjusts tab bar height based on bottom navigation buttons/gesture bar
-          height: 60 + insets.bottom, 
-          paddingBottom: 8 + insets.bottom,
-          paddingTop: 6,
+        tabBarStyle: {
+          backgroundColor: '#FFFFFF',
+          borderTopWidth: 1,
+          borderTopColor: '#E2E8F0',
+          height: Platform.OS === 'ios' ? 85 : 65,
+          paddingBottom: Platform.OS === 'ios' ? 25 : 10,
+          paddingTop: 8,
         },
       }}
     >
-      {/* 🏠 Home Tab */}
-      <Tabs.Screen 
-        name="index" 
-        options={{ 
-          title: 'Home', 
-          headerTitle: 'Dashboard', 
-          tabBarIcon: ({ color }) => (
-            <Ionicons name="home" size={20} color={color} />
-          ) 
-        }} 
+      <Tabs.Screen
+        name="index"
+        options={{
+          title: 'Home',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="home" size={size || 22} color={color} />
+          ),
+        }}
       />
-
-      {/* 📸 Attendance Tab */}
-      <Tabs.Screen 
-        name="attendance" 
-        options={{ 
-          title: 'Attendance', 
-          headerTitle: 'Mark Attendance', 
-          tabBarIcon: ({ color }) => (
-            <Ionicons name="camera" size={22} color={color} />
-          ) 
-        }} 
+      <Tabs.Screen
+        name="attendance"
+        options={{
+          title: 'Attendance',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="camera" size={size || 22} color={color} />
+          ),
+        }}
       />
-
-      {/* 📅 History Tab */}
-      <Tabs.Screen 
-        name="history" 
-        options={{ 
-          title: 'History', 
-          headerTitle: 'Attendance Logs', 
-          tabBarIcon: ({ color }) => (
-            <Ionicons name="calendar" size={20} color={color} />
-          ) 
-        }} 
+      <Tabs.Screen
+        name="history"
+        options={{
+          title: 'History',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="calendar" size={size || 22} color={color} />
+          ),
+        }}
       />
-
-      {/* 👤 Profile Tab */}
-      <Tabs.Screen 
-        name="profile" 
-        options={{ 
-          title: 'Profile', 
-          headerTitle: 'My Profile', 
-          tabBarIcon: ({ color }) => (
-            <Ionicons name="person" size={20} color={color} />
-          ) 
-        }} 
-      />
-
-      {/* 🛑 HIDDEN ABSOLUTE BLOCKER FOR THE EXPLORE TAB */}
-      <Tabs.Screen 
-        name="explore" 
-        options={{ 
-          href: null 
-        }} 
+      <Tabs.Screen
+        name="profile"
+        options={{
+          title: 'Profile',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="person" size={size || 22} color={color} />
+          ),
+        }}
       />
     </Tabs>
   );
