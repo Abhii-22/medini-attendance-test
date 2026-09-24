@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert, Linking, ActivityIndicator, Modal, Image } from 'react-native';
+import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert, Linking, ActivityIndicator, Modal, Image, Platform } from 'react-native';
 import { useAuth, API_BASE_URL } from './_layout';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 
@@ -22,6 +22,7 @@ interface AttendanceRecord {
   dayOfWeek: string;
   loginTime: string;
   logoutTime: string;
+  isSundayPlaceholder?: boolean;
 }
 
 interface OfficeLocationItem {
@@ -87,11 +88,16 @@ export default function AdminScreen() {
     'July', 'August', 'September', 'October', 'November', 'December'
   ];
 
+  const monthNameToIndex: { [key: string]: number } = {
+    January: 0, February: 1, March: 2, April: 3, May: 4, June: 5,
+    July: 6, August: 7, September: 8, October: 9, November: 10, December: 11
+  };
+
   const hoursList = Array.from({ length: 13 }, (_, i) => i);
   const minutesList = Array.from({ length: 60 }, (_, i) => i);
 
   const calculateWorkingHours = (inTime: string, outTime: string, employeeNameTarget?: string, employeeIdTarget?: string) => {
-    if (!inTime || !outTime || inTime === '--:--' || outTime === '--:--' || inTime === 'ABSENT' || outTime === 'ABSENT') {
+    if (!inTime || !outTime || inTime === '--:--' || outTime === '--:--' || inTime === 'ABSENT' || outTime === 'ABSENT' || inTime === 'OFF') {
       return '--';
     }
     try {
@@ -182,9 +188,89 @@ export default function AdminScreen() {
     }
   }, [activeTab, selectedEmpFilter]);
 
+  // 🎯 PRECISION DATE PARSER FOR ADMIN TIMELINE SORTING
+  const parseDateToTimestamp = (dateStr: string): number => {
+    if (!dateStr) return 0;
+    const cleanStr = dateStr.replace(',', '').trim();
+    const parts = cleanStr.split(/\s+/);
+    
+    if (parts.length >= 3) {
+      const monthName = parts[0];
+      const dayNum = parseInt(parts[1], 10);
+      const yearNum = parseInt(parts[2], 10);
+      
+      const mIndex = monthNameToIndex[monthName];
+      if (mIndex !== undefined && !isNaN(dayNum) && !isNaN(yearNum)) {
+        return new Date(yearNum, mIndex, dayNum).getTime();
+      }
+    }
+
+    const fallback = new Date(dateStr).getTime();
+    return isNaN(fallback) ? 0 : fallback;
+  };
+
+  // 🏖️ GENERATE SUNDAYS & INTERLEAVE STRICTLY INTO PROPER CALENDAR ORDER FOR ADMIN VIEW
+  const getCombinedLogsWithSundays = () => {
+    const currentYear = new Date().getFullYear();
+    const targetMonthIndex = monthNameToIndex[selectedMonthFilter] ?? new Date().getMonth();
+    
+    const totalDays = new Date(currentYear, targetMonthIndex + 1, 0).getDate();
+    const today = new Date();
+
+    const allDaysMap = new Map<string, AttendanceRecord>();
+
+    // 1. Generate Sundays for the selected month up to today
+    for (let day = 1; day <= totalDays; day++) {
+      const dateObj = new Date(currentYear, targetMonthIndex, day);
+      if (dateObj > today && targetMonthIndex === today.getMonth()) break; 
+
+      const formattedDateStr = dateObj.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+      const formattedDayName = dateObj.toLocaleDateString('en-US', { weekday: 'long' });
+      const isSunday = dateObj.getDay() === 0;
+
+      if (isSunday) {
+        allDaysMap.set(formattedDateStr, {
+          _id: `sunday-${formattedDateStr}`,
+          employeeIdReference: selectedEmpFilter !== 'ALL' ? (employees.find(e => e.name === selectedEmpFilter)?.employeeId || 'N/A') : 'MULTIPLE',
+          employeeName: selectedEmpFilter !== 'ALL' ? selectedEmpFilter : 'Sunday Off',
+          date: formattedDateStr,
+          dayOfWeek: formattedDayName,
+          loginTime: 'OFF',
+          logoutTime: 'OFF',
+          isSundayPlaceholder: true
+        });
+      }
+    }
+
+    // 2. Overlay actual cloud attendance logs (Weekdays / check-ins take priority)
+    attendanceLogs.forEach((log) => {
+      if (log.date) {
+        const timestamp = parseDateToTimestamp(log.date);
+        if (timestamp > 0) {
+          const standardizedDateStr = new Date(timestamp).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+          allDaysMap.set(standardizedDateStr, log);
+        } else {
+          allDaysMap.set(log.date, log);
+        }
+      }
+    });
+
+    // 3. Convert map to array and sort strictly descending by precise timestamp
+    const combined = Array.from(allDaysMap.values());
+    combined.sort((a, b) => {
+      const timeA = parseDateToTimestamp(a.date);
+      const timeB = parseDateToTimestamp(b.date);
+      return timeB - timeA; 
+    });
+
+    return combined;
+  };
+
+  const allLogsWithSundays = getCombinedLogsWithSundays();
+
   const getFilteredLogs = () => {
     const currentYearString = new Date().getFullYear().toString();
-    return attendanceLogs.filter((log) => {
+    return allLogsWithSundays.filter((log) => {
       if (!log.date) return false;
       const logDateLower = log.date.toLowerCase();
       const matchesMonth = logDateLower.includes(selectedMonthFilter.toLowerCase());
@@ -478,12 +564,56 @@ export default function AdminScreen() {
     setShowAdminPassword(false);
   };
 
+  // 📊 CALCULATE SUMMARY & EXPORT CSV WITH PRESENT, ABSENT, AND SUNDAYS
   const handleDownloadReport = () => {
-    const currentYearString = new Date().getFullYear().toString();
-    const downloadUrl = `${API_BASE_URL}/admin/download-attendance?employeeName=${selectedEmpFilter}&month=${selectedMonthFilter}&year=${currentYearString}&includeWorkingHours=true`;
-    Linking.openURL(downloadUrl).catch(() => {
-      Alert.alert('Download Error', 'Could not connect to spreadsheet download engine.');
+    let presentCount = 0;
+    let absentCount = 0;
+    let sundayCount = 0;
+
+    filteredLogs.forEach(log => {
+      const isSun = log.isSundayPlaceholder || log.dayOfWeek?.toLowerCase() === 'sunday' || new Date(log.date).getDay() === 0;
+      if (isSun) {
+        sundayCount++;
+      } else if (log.loginTime === 'ABSENT' || log.logoutTime === 'ABSENT') {
+        absentCount++;
+      } else if (log.loginTime !== '--:--' && log.loginTime !== 'OFF') {
+        presentCount++;
+      }
     });
+
+    // Build CSV Content including Summary Metrics at top
+    let csvHeader = `Attendance Report (${selectedMonthFilter} ${new Date().getFullYear()})\n`;
+    csvHeader += `Employee Filter,${selectedEmpFilter}\n`;
+    csvHeader += `Total Days Present,${presentCount}\n`;
+    csvHeader += `Total Days Absent,${absentCount}\n`;
+    csvHeader += `Total Sundays / Weekend Offs,${sundayCount}\n\n`;
+    csvHeader += `Employee Name,Employee ID,Date,Day,Login Time,Logout Time,Working Hours\n`;
+
+    const csvRows = filteredLogs.map(log => {
+      const isSun = log.isSundayPlaceholder || log.dayOfWeek?.toLowerCase() === 'sunday' || new Date(log.date).getDay() === 0;
+      const hours = isSun ? 'OFF' : calculateWorkingHours(log.loginTime, log.logoutTime, log.employeeName, log.employeeIdReference);
+      return `"${log.employeeName}","${log.employeeIdReference}","${log.date}","${log.dayOfWeek}","${log.loginTime}","${log.logoutTime}","${hours}"`;
+    });
+
+    const csvContent = csvHeader + csvRows.join('\n');
+
+    if (Platform.OS === 'web') {
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.setAttribute('href', url);
+      link.setAttribute('download', `Attendance_Report_${selectedMonthFilter}_${new Date().getFullYear()}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } else {
+      // Fallback to backend endpoint export if native
+      const currentYearString = new Date().getFullYear().toString();
+      const downloadUrl = `${API_BASE_URL}/admin/download-attendance?employeeName=${selectedEmpFilter}&month=${selectedMonthFilter}&year=${currentYearString}&includeWorkingHours=true`;
+      Linking.openURL(downloadUrl).catch(() => {
+        Alert.alert('Download Error', 'Could not connect to spreadsheet download engine.');
+      });
+    }
   };
 
   return (
@@ -541,7 +671,6 @@ export default function AdminScreen() {
 
       {activeTab === 'REGISTER' && (
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
-          
           {(!isEditing || (isEditing && !employees.find(e => e._id === editingTargetId)?.role?.includes('ADMIN_VIEW'))) && (
             <View style={styles.formCard}>
               <View style={styles.cardHeaderRow}>
@@ -570,13 +699,9 @@ export default function AdminScreen() {
 
               <Text style={styles.inputLabel}>Set Fixed Lunch Break Duration</Text>
               <View style={styles.dropdownPickerRow}>
-                
                 <View style={{ width: '48%' }}>
                   <Text style={styles.subInputLabel}>Hours (0 - 12)</Text>
-                  <TouchableOpacity 
-                    style={styles.dropdownTriggerBtn} 
-                    onPress={() => setShowHoursDropdown(true)}
-                  >
+                  <TouchableOpacity style={styles.dropdownTriggerBtn} onPress={() => setShowHoursDropdown(true)}>
                     <Text style={styles.dropdownValueText}>{selectedLunchHours} {selectedLunchHours === 1 ? 'Hour' : 'Hours'}</Text>
                     <Ionicons name="chevron-down" size={16} color="#718096" />
                   </TouchableOpacity>
@@ -584,15 +709,11 @@ export default function AdminScreen() {
 
                 <View style={{ width: '48%' }}>
                   <Text style={styles.subInputLabel}>Minutes (0 - 59)</Text>
-                  <TouchableOpacity 
-                    style={styles.dropdownTriggerBtn} 
-                    onPress={() => setShowMinsDropdown(true)}
-                  >
+                  <TouchableOpacity style={styles.dropdownTriggerBtn} onPress={() => setShowMinsDropdown(true)}>
                     <Text style={styles.dropdownValueText}>{selectedLunchMins} Mins</Text>
                     <Ionicons name="chevron-down" size={16} color="#718096" />
                   </TouchableOpacity>
                 </View>
-
               </View>
 
               <Text style={styles.lunchSummaryNote}>
@@ -610,15 +731,8 @@ export default function AdminScreen() {
                   secureTextEntry={!showEmpPassword}
                   autoCapitalize="none"
                 />
-                <TouchableOpacity
-                  style={styles.eyeIconBtn}
-                  onPress={() => setShowEmpPassword(!showEmpPassword)}
-                >
-                  <Ionicons
-                    name={showEmpPassword ? 'eye-off-outline' : 'eye-outline'}
-                    size={20}
-                    color="#718096"
-                  />
+                <TouchableOpacity style={styles.eyeIconBtn} onPress={() => setShowEmpPassword(!showEmpPassword)}>
+                  <Ionicons name={showEmpPassword ? 'eye-off-outline' : 'eye-outline'} size={20} color="#718096" />
                 </TouchableOpacity>
               </View>
 
@@ -673,15 +787,8 @@ export default function AdminScreen() {
                   secureTextEntry={!showAdminPassword}
                   autoCapitalize="none"
                 />
-                <TouchableOpacity
-                  style={styles.eyeIconBtn}
-                  onPress={() => setShowAdminPassword(!showAdminPassword)}
-                >
-                  <Ionicons
-                    name={showAdminPassword ? 'eye-off-outline' : 'eye-outline'}
-                    size={20}
-                    color="#718096"
-                  />
+                <TouchableOpacity style={styles.eyeIconBtn} onPress={() => setShowAdminPassword(!showAdminPassword)}>
+                  <Ionicons name={showAdminPassword ? 'eye-off-outline' : 'eye-outline'} size={20} color="#718096" />
                 </TouchableOpacity>
               </View>
 
@@ -919,33 +1026,57 @@ export default function AdminScreen() {
             ) : (
               searchedLogs.map((logItem) => {
                 const isAbsent = logItem.loginTime === 'ABSENT' || logItem.logoutTime === 'ABSENT';
+                const isSunday = logItem.isSundayPlaceholder || logItem.dayOfWeek?.toLowerCase() === 'sunday' || new Date(logItem.date).getDay() === 0;
+
                 return (
-                  <View key={logItem._id} style={[styles.dataLogCard, isAbsent && styles.dataLogCardAbsent]}>
+                  <View 
+                    key={logItem._id} 
+                    style={[
+                      styles.dataLogCard, 
+                      isAbsent && styles.dataLogCardAbsent,
+                      isSunday && { backgroundColor: '#F7FAFC', borderColor: '#CBD5E0' }
+                    ]}
+                  >
                     <View style={styles.logCardHeader}>
                       <View>
-                        <Text style={styles.logEmployeeIdentity}>{logItem.employeeName}</Text>
+                        <Text style={[styles.logEmployeeIdentity, isSunday && { color: '#4A5568' }]}>{logItem.employeeName}</Text>
                         <Text style={styles.logEmployeeIdSub}>ID reference: {logItem.employeeIdReference}</Text>
                       </View>
-                      <View style={[styles.dateBadge, isAbsent && { backgroundColor: '#FED7D7', borderColor: '#FEB2B2' }]}>
-                        <Text style={[styles.dateBadgeText, isAbsent && { color: '#9B2C2C' }]}>{logItem.date}</Text>
+                      <View style={{ alignItems: 'flex-end' }}>
+                        <View style={[styles.dateBadge, isAbsent && { backgroundColor: '#FED7D7', borderColor: '#FEB2B2' }, isSunday && { backgroundColor: '#EDF2F7', borderColor: '#CBD5E0' }]}>
+                          <Text style={[styles.dateBadgeText, isAbsent && { color: '#9B2C2C' }, isSunday && { color: '#4A5568' }]}>{logItem.date}</Text>
+                        </View>
+                        {isSunday && (
+                          <View style={[styles.dateBadge, { backgroundColor: '#EDF2F7', borderColor: '#CBD5E0', marginTop: 4, paddingVertical: 2 }]}>
+                            <Text style={{ fontSize: 9, fontWeight: '700', color: '#4A5568' }}>🏖️ Weekend Off</Text>
+                          </View>
+                        )}
                       </View>
                     </View>
-                    <View style={styles.punchMetricsRow}>
-                      <View style={[styles.metricBox, { backgroundColor: '#F0FDF4', borderColor: '#DCFCE7' }]}>
-                        <Text style={[styles.metricLabel, { color: '#16A34A' }]}>HOURS WORKED</Text>
-                        <Text style={[styles.metricTime, { color: '#15803D' }]}>
-                          {calculateWorkingHours(logItem.loginTime, logItem.logoutTime, logItem.employeeName, logItem.employeeIdReference)}
-                        </Text>
+
+                    {isSunday ? (
+                      <View style={[styles.metricBox, { backgroundColor: '#EDF2F7', borderColor: '#CBD5E0', width: '100%', alignItems: 'center', paddingVertical: 10 }]}>
+                        <Text style={[styles.metricLabel, { color: '#4A5568' }]}>STATUS</Text>
+                        <Text style={[styles.metricTime, { color: '#2D3748' }]}>Sunday - Non-Working Day</Text>
                       </View>
-                      <View style={[styles.metricBox, isAbsent && { borderColor: '#FEB2B2', backgroundColor: '#FFF5F5' }]}>
-                        <Text style={styles.metricLabel}>PUNCH IN</Text>
-                        <Text style={[styles.metricTime, isAbsent ? { color: '#E53E3E' } : { color: '#2F855A' }]}>{logItem.loginTime}</Text>
+                    ) : (
+                      <View style={styles.punchMetricsRow}>
+                        <View style={[styles.metricBox, { backgroundColor: '#F0FDF4', borderColor: '#DCFCE7' }, isAbsent && { backgroundColor: '#FFF5F5', borderColor: '#FED7D7' }]}>
+                          <Text style={[styles.metricLabel, { color: '#16A34A' }, isAbsent && { color: '#E53E3E' }]}>HOURS WORKED</Text>
+                          <Text style={[styles.metricTime, { color: '#15803D' }, isAbsent && { color: '#E53E3E' }]}>
+                            {calculateWorkingHours(logItem.loginTime, logItem.logoutTime, logItem.employeeName, logItem.employeeIdReference)}
+                          </Text>
+                        </View>
+                        <View style={[styles.metricBox, isAbsent && { borderColor: '#FEB2B2', backgroundColor: '#FFF5F5' }]}>
+                          <Text style={styles.metricLabel}>PUNCH IN</Text>
+                          <Text style={[styles.metricTime, isAbsent ? { color: '#E53E3E' } : { color: '#2F855A' }]}>{logItem.loginTime}</Text>
+                        </View>
+                        <View style={[styles.metricBox, isAbsent && { borderColor: '#FEB2B2', backgroundColor: '#FFF5F5' }]}>
+                          <Text style={styles.metricLabel}>PUNCH OUT</Text>
+                          <Text style={[styles.metricTime, isAbsent ? { color: '#E53E3E' } : { color: '#4A5568' }]}>{logItem.logoutTime}</Text>
+                        </View>
                       </View>
-                      <View style={[styles.metricBox, isAbsent && { borderColor: '#FEB2B2', backgroundColor: '#FFF5F5' }]}>
-                        <Text style={styles.metricLabel}>PUNCH OUT</Text>
-                        <Text style={[styles.metricTime, isAbsent ? { color: '#E53E3E' } : { color: '#4A5568' }]}>{logItem.logoutTime}</Text>
-                      </View>
-                    </View>
+                    )}
                   </View>
                 );
               })

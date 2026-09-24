@@ -122,19 +122,85 @@ export const deleteEmployee = async (req: Request, res: Response): Promise<any> 
   }
 };
 
-export const getAttendanceSheet = async (req: Request, res: Response) => {
-  const employeeName = req.query.employeeName ? String(req.query.employeeName) : 'ALL';
-  const filter = employeeName !== 'ALL' ? { employeeName } : {};
-  
-  const sheets = await AttendanceShiftLog.find(filter).sort({ createdAt: -1 });
-  res.status(200).json(sheets);
+export const getAttendanceSheet = async (req: Request, res: Response): Promise<any> => {
+  try {
+    const employeeName = req.query.employeeName ? String(req.query.employeeName) : 'ALL';
+    const filter = employeeName !== 'ALL' ? { employeeName } : {};
+    
+    const sheets = await AttendanceShiftLog.find(filter).sort({ createdAt: -1 });
+
+    // 🌟 AUTOMATIC LAZY ABSENT INJECTION FOR PAST COMPLETED DAYS ONLY (STRICTLY EXCLUDES TODAY)
+    const allEmployees = await RegisteredEmployee.find();
+    const targetEmployees = employeeName !== 'ALL' 
+      ? allEmployees.filter(e => e.name.toLowerCase() === employeeName.toLowerCase())
+      : allEmployees.filter(e => {
+          const r = Array.isArray(e.role) ? e.role : [e.role || 'EMPLOYEE'];
+          return !r.includes('ADMIN_VIEW');
+        });
+
+    const now = new Date();
+    const todayString = now.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'Asia/Kolkata' });
+
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth();
+    const todayDateNum = now.getDate();
+
+    const existingLogsMap = new Map<string, boolean>();
+    sheets.forEach((log: any) => {
+      existingLogsMap.set(`${log.employeeIdReference}_${log.date}`, true);
+    });
+
+    let newlyDetectedAbsentLogs: any[] = [];
+
+    for (const emp of targetEmployees) {
+      // Loop strictly through past days of the month (day < todayDateNum)
+      for (let day = 1; day < todayDateNum; day++) {
+        const dateObj = new Date(currentYear, currentMonth, day);
+        
+        // Skip Sundays
+        if (dateObj.getDay() === 0) continue;
+
+        const formattedDateStr = dateObj.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+        
+        // Strict safety check: Never mark today as absent
+        if (formattedDateStr === todayString) continue;
+
+        const dayOfWeekStr = dateObj.toLocaleDateString('en-US', { weekday: 'long' });
+        const uniqueKey = `${emp.employeeId}_${formattedDateStr}`;
+
+        if (!existingLogsMap.has(uniqueKey)) {
+          newlyDetectedAbsentLogs.push({
+            _id: `absent-${emp.employeeId}-${formattedDateStr}`,
+            employeeIdReference: emp.employeeId,
+            employeeName: emp.name,
+            date: formattedDateStr,
+            dayOfWeek: dayOfWeekStr,
+            loginTime: 'ABSENT',
+            logoutTime: 'ABSENT',
+            capturedPhotoInUri: '',
+            capturedPhotoOutUri: '',
+            locationInAddress: '',
+            locationOutAddress: '',
+            isVirtualAbsent: true
+          });
+        }
+      }
+    }
+
+    const combined = [...sheets, ...newlyDetectedAbsentLogs];
+    combined.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+    return res.status(200).json(combined);
+  } catch (err: any) {
+    return res.status(500).json({ success: false, message: 'Failed to compile attendance sheet.', error: err.message });
+  }
 };
 
 export const downloadAttendance = async (req: Request, res: Response): Promise<any> => {
   try {
     const employeeName = req.query.employeeName ? String(req.query.employeeName) : 'ALL';
-    const filterMonth = req.query.month ? String(req.query.month) : '';
-    const filterYear = req.query.year ? String(req.query.year) : '';
+    const filterMonth = req.query.month ? String(req.query.month) : new Date().toLocaleString('en-US', { month: 'long' });
+    const filterYear = req.query.year ? String(req.query.year) : new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata', year: 'numeric' });
 
     const allEmployees = await RegisteredEmployee.find({});
     const employeeLunchMap: { [key: string]: number } = {};
@@ -147,7 +213,7 @@ export const downloadAttendance = async (req: Request, res: Response): Promise<a
     const records = await AttendanceShiftLog.find(queryFilter).sort({ date: -1 });
 
     const calculateServerWorkingHours = (inTime: string, outTime: string, lunchBreakMinutes: number = 0): string => {
-      if (!inTime || !outTime || inTime === '--:--' || outTime === '--:--' || inTime === 'ABSENT' || outTime === 'ABSENT') {
+      if (!inTime || !outTime || inTime === '--:--' || outTime === '--:--' || inTime === 'ABSENT' || outTime === 'ABSENT' || inTime === 'OFF') {
         return '--';
       }
       try {
@@ -190,21 +256,83 @@ export const downloadAttendance = async (req: Request, res: Response): Promise<a
       return matchesMonth && matchesYear;
     });
 
-    let csvData = "Employee Name,Employee ID,Date,Day of Week,Login Time,Logout Time,Punch In Location,Punch Out Location,Hours Worked\n";
+    const monthNameToIndex: { [key: string]: number } = {
+      January: 0, February: 1, March: 2, April: 3, May: 4, June: 5,
+      July: 6, August: 7, September: 8, October: 9, November: 10, December: 11
+    };
 
-    filteredRecords.forEach((row: any) => {
-      const empLunchMins = employeeLunchMap[row.employeeIdReference?.toUpperCase()] ?? employeeLunchMap[row.employeeName?.toLowerCase().trim()] ?? 0;
-      const workingHours = calculateServerWorkingHours(row.loginTime, row.logoutTime, empLunchMins);
-      const locIn = (row.get('locationInAddress') || '').replace(/"/g, '""');
-      const locOut = (row.get('locationOutAddress') || '').replace(/"/g, '""');
-      csvData += `"${row.employeeName}","${row.employeeIdReference}","${row.date}","${row.dayOfWeek}","${row.loginTime}","${row.logoutTime}","${locIn}","${locOut}","${workingHours}"\n`;
+    const targetMonthIndex = monthNameToIndex[filterMonth] ?? new Date().getMonth();
+    const targetYearNum = parseInt(filterYear, 10) || new Date().getFullYear();
+    const totalDaysInMonth = new Date(targetYearNum, targetMonthIndex + 1, 0).getDate();
+    const today = new Date();
+
+    const allDaysMap = new Map<string, any>();
+
+    for (let day = 1; day <= totalDaysInMonth; day++) {
+      const dateObj = new Date(targetYearNum, targetMonthIndex, day);
+      if (dateObj > today && targetMonthIndex === today.getMonth()) break; 
+
+      if (dateObj.getDay() === 0) {
+        const formattedDateStr = dateObj.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+        const targetEmpName = employeeName !== 'ALL' ? employeeName : (allEmployees[0]?.name || 'Employee');
+        const targetEmpId = employeeName !== 'ALL' ? (allEmployees.find(e => e.name === employeeName)?.employeeId || 'N/A') : 'MULTIPLE';
+
+        allDaysMap.set(formattedDateStr, {
+          employeeName: targetEmpName,
+          employeeIdReference: targetEmpId,
+          date: formattedDateStr,
+          dayOfWeek: 'Sunday',
+          loginTime: 'OFF',
+          logoutTime: 'OFF',
+          locationInAddress: 'Non-Working Day',
+          locationOutAddress: 'Non-Working Day',
+          isSundayPlaceholder: true
+        });
+      }
+    }
+
+    filteredRecords.forEach((log: any) => {
+      if (log.date) {
+        allDaysMap.set(log.date, log);
+      }
     });
 
-    const filePrefixMonth = filterMonth || 'Global';
-    const filePrefixYear = filterYear || new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata', year: 'numeric' });
+    const combinedRecords = Array.from(allDaysMap.values());
+    combinedRecords.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+    let presentCount = 0;
+    let absentCount = 0;
+    let sundayCount = 0;
+
+    combinedRecords.forEach((log: any) => {
+      const isSun = log.isSundayPlaceholder || log.dayOfWeek?.toLowerCase() === 'sunday' || new Date(log.date).getDay() === 0;
+      if (isSun) {
+        sundayCount++;
+      } else if (log.loginTime === 'ABSENT' || log.logoutTime === 'ABSENT') {
+        absentCount++;
+      } else if (log.loginTime && log.loginTime !== '--:--') {
+        presentCount++;
+      }
+    });
+
+    let csvData = `Attendance Report (${filterMonth} ${filterYear})\n`;
+    csvData += `Employee Filter,${employeeName}\n`;
+    csvData += `Total Days Present,${presentCount}\n`;
+    csvData += `Total Days Absent,${absentCount}\n`;
+    csvData += `Total Sundays / Weekend Offs,${sundayCount}\n\n`;
+    csvData += "Employee Name,Employee ID,Date,Day of Week,Login Time,Logout Time,Punch In Location,Punch Out Location,Hours Worked\n";
+
+    combinedRecords.forEach((row: any) => {
+      const isSun = row.isSundayPlaceholder || row.dayOfWeek?.toLowerCase() === 'sunday';
+      const empLunchMins = employeeLunchMap[row.employeeIdReference?.toUpperCase()] ?? employeeLunchMap[row.employeeName?.toLowerCase().trim()] ?? 0;
+      const workingHours = isSun ? 'OFF' : calculateServerWorkingHours(row.loginTime, row.logoutTime, empLunchMins);
+      const locIn = (row.locationInAddress || '').replace(/"/g, '""');
+      const locOut = (row.locationOutAddress || '').replace(/"/g, '""');
+      csvData += `"${row.employeeName}","${row.employeeIdReference || 'N/A'}","${row.date}","${row.dayOfWeek}","${row.loginTime}","${row.logoutTime}","${locIn}","${locOut}","${workingHours}"\n`;
+    });
 
     res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', `attachment; filename=Attendance_Report_${filePrefixMonth}_${filePrefixYear}.csv`);
+    res.setHeader('Content-Disposition', `attachment; filename=Attendance_Report_${filterMonth}_${filterYear}.csv`);
     return res.status(200).send(csvData);
 
   } catch (err) {

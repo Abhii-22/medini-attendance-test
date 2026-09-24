@@ -16,6 +16,7 @@ interface BackendLog {
   capturedPhotoOutUri?: string;
   locationInAddress?: string;
   locationOutAddress?: string;
+  isSundayPlaceholder?: boolean;
 }
 
 interface PhotoModalState {
@@ -37,7 +38,6 @@ export default function HistoryScreen() {
 
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   
-  // 📅 Monthly Filter States (matching Admin Page)
   const currentMonthName = new Date().toLocaleDateString('en-US', { month: 'long' });
   const [selectedMonthFilter, setSelectedMonthFilter] = useState<string>(currentMonthName);
 
@@ -45,6 +45,11 @@ export default function HistoryScreen() {
     'January', 'February', 'March', 'April', 'May', 'June', 
     'July', 'August', 'September', 'October', 'November', 'December'
   ];
+
+  const monthNameToIndex: { [key: string]: number } = {
+    January: 0, February: 1, March: 2, April: 3, May: 4, June: 5,
+    July: 6, August: 7, September: 8, October: 9, November: 10, December: 11
+  };
 
   const [isCalendarVisible, setIsCalendarVisible] = useState<boolean>(false);
   const [calendarViewDate, setCalendarViewDate] = useState<Date>(new Date());
@@ -169,18 +174,98 @@ export default function HistoryScreen() {
     setIsCalendarVisible(false);
   };
 
-  // 🔍 Filter logs based on selected specific date or monthly filter strip
-  const filteredLogs = cloudLogs.filter((item) => {
+  // 🎯 PRECISION DATE PARSER TO GUARANTEE EXACT CALENDAR TIMELINE SORTING
+  const parseDateToTimestamp = (dateStr: string): number => {
+    if (!dateStr) return 0;
+    
+    // Example format: "September 23, 2026"
+    const cleanStr = dateStr.replace(',', '').trim();
+    const parts = cleanStr.split(/\s+/);
+    
+    if (parts.length >= 3) {
+      const monthName = parts[0];
+      const dayNum = parseInt(parts[1], 10);
+      const yearNum = parseInt(parts[2], 10);
+      
+      const mIndex = monthNameToIndex[monthName];
+      if (mIndex !== undefined && !isNaN(dayNum) && !isNaN(yearNum)) {
+        return new Date(yearNum, mIndex, dayNum).getTime();
+      }
+    }
+
+    // Fallback parser
+    const fallback = new Date(dateStr).getTime();
+    return isNaN(fallback) ? 0 : fallback;
+  };
+
+  // 🏖️ GENERATE SUNDAYS & INTERLEAVE EXACTLY INTO PROPER CALENDAR ORDER
+  const getCombinedLogsWithSundays = () => {
+    const currentYear = new Date().getFullYear();
+    const targetMonthIndex = monthNameToIndex[selectedMonthFilter] ?? new Date().getMonth();
+    
+    const totalDays = new Date(currentYear, targetMonthIndex + 1, 0).getDate();
+    const today = new Date();
+
+    const allDaysMap = new Map<string, BackendLog>();
+
+    // 1. Generate Sundays for the selected month up to today
+    for (let day = 1; day <= totalDays; day++) {
+      const dateObj = new Date(currentYear, targetMonthIndex, day);
+      if (dateObj > today && targetMonthIndex === today.getMonth()) break; 
+
+      const formattedDateStr = dateObj.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+      const formattedDayName = dateObj.toLocaleDateString('en-US', { weekday: 'long' });
+      const isSunday = dateObj.getDay() === 0;
+
+      if (isSunday) {
+        allDaysMap.set(formattedDateStr, {
+          _id: `sunday-${formattedDateStr}`,
+          employeeIdReference: currentUser?.employeeId || 'N/A',
+          employeeName: currentUser?.name || 'Employee',
+          date: formattedDateStr,
+          dayOfWeek: formattedDayName,
+          loginTime: 'OFF',
+          logoutTime: 'OFF',
+          isSundayPlaceholder: true
+        });
+      }
+    }
+
+    // 2. Overlay actual cloud attendance logs (Weekdays / check-ins take priority)
+    cloudLogs.forEach(log => {
+      if (log.date) {
+        const timestamp = parseDateToTimestamp(log.date);
+        if (timestamp > 0) {
+          const standardizedDateStr = new Date(timestamp).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+          allDaysMap.set(standardizedDateStr, log);
+        } else {
+          allDaysMap.set(log.date, log);
+        }
+      }
+    });
+
+    // 3. Convert map to array and sort strictly descending by precise timestamp (Latest at top, descending down to the 1st)
+    const combined = Array.from(allDaysMap.values());
+    combined.sort((a, b) => {
+      const timeA = parseDateToTimestamp(a.date);
+      const timeB = parseDateToTimestamp(b.date);
+      return timeB - timeA; 
+    });
+
+    return combined;
+  };
+
+  const allLogsWithSundays = getCombinedLogsWithSundays();
+
+  const filteredLogs = allLogsWithSundays.filter((item) => {
     if (!item.date) return false;
     const currentYearString = new Date().getFullYear().toString();
     const logDateLower = item.date.toLowerCase();
 
-    // If an exact day is picked from calendar, filter by that exact day
     if (selectedDate) {
       return logDateLower.includes(selectedDate.trim().toLowerCase());
     }
 
-    // Otherwise, filter by selected month and current year
     const matchesMonth = logDateLower.includes(selectedMonthFilter.toLowerCase());
     const matchesYear = logDateLower.includes(currentYearString);
     return matchesMonth && matchesYear;
@@ -224,7 +309,6 @@ export default function HistoryScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* 📅 MONTHLY FILTER STRIP (Matches Admin Page) */}
       <View style={styles.sectionHeaderRowInline}>
         <Ionicons name="calendar-outline" size={14} color="#2B6CB0" />
         <Text style={styles.sectionHeadingLabelInline}>Select Tracking Month ({new Date().getFullYear()})</Text>
@@ -286,6 +370,8 @@ export default function HistoryScreen() {
             const hasInPhoto = !!item.capturedPhotoInUri;
             const hasOutPhoto = !!item.capturedPhotoOutUri;
             const isAbsent = item.loginTime === 'ABSENT' || item.logoutTime === 'ABSENT';
+            
+            const isSunday = item.isSundayPlaceholder || item.dayOfWeek?.toLowerCase() === 'sunday' || new Date(item.date).getDay() === 0;
 
             return (
               <View key={item._id} style={styles.dayGroupCardWrapper}>
@@ -294,16 +380,21 @@ export default function HistoryScreen() {
                   style={[
                     styles.dayGroupCard, 
                     isExpanded && styles.dayGroupCardExpanded,
-                    isAbsent && styles.dayGroupCardAbsent
+                    isAbsent && styles.dayGroupCardAbsent,
+                    isSunday && { backgroundColor: '#F7FAFC', borderColor: '#CBD5E0' }
                   ]}
-                  onPress={() => handleToggleDrawer(item._id)}
+                  onPress={() => !isSunday && handleToggleDrawer(item._id)}
                 >
                   <View style={styles.dayHeader}>
                     <View>
-                      <Text style={[styles.dayText, isAbsent && { color: '#E53E3E' }]}>{item.dayOfWeek}</Text>
+                      <Text style={[styles.dayText, isAbsent && { color: '#E53E3E' }, isSunday && { color: '#4A5568' }]}>{item.dayOfWeek || 'Sunday'}</Text>
                       <Text style={styles.dateText}>{item.date}</Text>
                     </View>
-                    {(hasInPhoto || hasOutPhoto) && !isAbsent && (
+                    {isSunday ? (
+                      <View style={[styles.photoLoggedBadge, { backgroundColor: '#EDF2F7', borderColor: '#CBD5E0' }]}>
+                        <Text style={[styles.photoLoggedBadgeText, { color: '#4A5568' }]}>🏖️ Weekend Off</Text>
+                      </View>
+                    ) : (hasInPhoto || hasOutPhoto) && !isAbsent && (
                       <View style={styles.photoLoggedBadge}>
                         <Ionicons name="camera" size={11} color="#007AFF" style={{ marginRight: 3 }} />
                         <Text style={styles.photoLoggedBadgeText}>Photos Logged</Text>
@@ -311,35 +402,42 @@ export default function HistoryScreen() {
                     )}
                   </View>
 
-                  <View style={styles.punchRow}>
-                    <View style={[styles.punchItem, { backgroundColor: '#F0FDF4', borderColor: '#DCFCE7' }, isAbsent && { backgroundColor: '#FFF5F5', borderColor: '#FED7D7' }]}>
-                      <Text style={[styles.punchLabel, { color: '#16A34A' }, isAbsent && { color: '#E53E3E' }]}>DURATION</Text>
-                      <Text style={[styles.punchTime, { color: '#15803D' }, isAbsent && { color: '#E53E3E' }]}>
-                        {calculateWorkingHours(item.loginTime, item.logoutTime, employeeLunchMins)}
-                      </Text>
+                  {isSunday ? (
+                    <View style={[styles.punchItem, { backgroundColor: '#EDF2F7', borderColor: '#CBD5E0', width: '100%', alignItems: 'center', paddingVertical: 10 }]}>
+                      <Text style={[styles.punchLabel, { color: '#4A5568' }]}>STATUS</Text>
+                      <Text style={[styles.punchTime, { color: '#2D3748' }]}>Sunday - Non-Working Day</Text>
                     </View>
+                  ) : (
+                    <View style={styles.punchRow}>
+                      <View style={[styles.punchItem, { backgroundColor: '#F0FDF4', borderColor: '#DCFCE7' }, isAbsent && { backgroundColor: '#FFF5F5', borderColor: '#FED7D7' }]}>
+                        <Text style={[styles.punchLabel, { color: '#16A34A' }, isAbsent && { color: '#E53E3E' }]}>DURATION</Text>
+                        <Text style={[styles.punchTime, { color: '#15803D' }, isAbsent && { color: '#E53E3E' }]}>
+                          {calculateWorkingHours(item.loginTime, item.logoutTime, employeeLunchMins)}
+                        </Text>
+                      </View>
 
-                    <View style={[styles.punchItem, isAbsent && styles.punchItemAbsent]}>
-                      <Text style={styles.punchLabel}>PUNCH IN</Text>
-                      <Text style={[styles.punchTime, item.loginTime === 'ABSENT' ? styles.absentColor : item.loginTime !== '--:--' ? styles.loginColor : styles.emptyColor]}>
-                        {item.loginTime}
-                      </Text>
+                      <View style={[styles.punchItem, isAbsent && styles.punchItemAbsent]}>
+                        <Text style={styles.punchLabel}>PUNCH IN</Text>
+                        <Text style={[styles.punchTime, item.loginTime === 'ABSENT' ? styles.absentColor : item.loginTime !== '--:--' ? styles.loginColor : styles.emptyColor]}>
+                          {item.loginTime}
+                        </Text>
+                      </View>
+
+                      <View style={[styles.punchItem, isAbsent && styles.punchItemAbsent]}>
+                        <Text style={styles.punchLabel}>PUNCH OUT</Text>
+                        <Text style={[styles.punchTime, item.logoutTime === 'ABSENT' ? styles.absentColor : item.logoutTime !== '--:--' ? styles.logoutColor : styles.emptyColor]}>
+                          {item.logoutTime}
+                        </Text>
+                      </View>
                     </View>
+                  )}
 
-                    <View style={[styles.punchItem, isAbsent && styles.punchItemAbsent]}>
-                      <Text style={styles.punchLabel}>PUNCH OUT</Text>
-                      <Text style={[styles.punchTime, item.logoutTime === 'ABSENT' ? styles.absentColor : item.logoutTime !== '--:--' ? styles.logoutColor : styles.emptyColor]}>
-                        {item.logoutTime}
-                      </Text>
-                    </View>
-                  </View>
-
-                  {(hasInPhoto || hasOutPhoto) && !isExpanded && !isAbsent && (
+                  {(hasInPhoto || hasOutPhoto) && !isExpanded && !isAbsent && !isSunday && (
                     <Text style={styles.expandTipText}>Tap card to inspect compliance captures ▼</Text>
                   )}
                 </TouchableOpacity>
 
-                {isExpanded && !isAbsent && (
+                {isExpanded && !isAbsent && !isSunday && (
                   <View style={styles.photoDrawerContainer}>
                     <Text style={styles.drawerLabelTitle}>Biometric Verification Snapshots:</Text>
                     <View style={styles.photoGridRow}>

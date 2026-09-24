@@ -17,6 +17,23 @@ interface EmployeeProfile {
   role?: string[];
 }
 
+// 📅 HELPER: Auto-count elapsed Sundays for the current month up to today
+const getSundaysCountForCurrentMonth = () => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  const todayDate = now.getDate();
+  
+  let sundayCount = 0;
+  for (let day = 1; day <= todayDate; day++) {
+    const date = new Date(year, month, day);
+    if (date.getDay() === 0) { // 0 represents Sunday
+      sundayCount++;
+    }
+  }
+  return sundayCount;
+};
+
 export default function HomeScreen() {
   const router = useRouter();
   const { currentUser } = useAuth();
@@ -29,6 +46,7 @@ export default function HomeScreen() {
   const [employeesList, setEmployeesList] = useState<EmployeeProfile[]>([]);
 
   const currentMonthName = new Date().toLocaleDateString('en-US', { month: 'long' });
+  const sundayCount = getSundaysCountForCurrentMonth(); // 🏖️ Dynamic Sunday count
 
   const employeeName = currentUser?.name || 'Employee';
   const employeeRole = currentUser?.designation || 'Staff Member';
@@ -176,13 +194,11 @@ export default function HomeScreen() {
         />
       }
     >
-      {/* 🏷️ SCREEN TITLE HEADER */}
       <View style={styles.screenTitleRow}>
         <Text style={styles.screenTitleText}>Dashboard</Text>
         <Text style={styles.screenSubtitleText}>Your attendance overview at a glance</Text>
       </View>
 
-      {/* 🟦 HEADER HERO CARD WITH PROPERLY FITTED MEDINI LOGO */}
       <View style={styles.dashboardHeroCard}>
         <View style={styles.heroHeaderRow}>
           <View style={styles.logoBadgeFrame}>
@@ -237,7 +253,20 @@ export default function HomeScreen() {
         </View>
       </View>
 
-      {/* EFFICIENCY RATIO PANEL */}
+      {/* 🏖️ DEDICATED SUNDAYS CARD (Light Yellow Styling) */}
+      <View style={styles.sundayCardBox}>
+        <View style={styles.sundayCardLeft}>
+          <View style={styles.sundayIconCircle}>
+            <Ionicons name="sunny-outline" size={20} color="#D69E2E" />
+          </View>
+          <View>
+            <Text style={styles.sundayCardTitle}>Sundays Elapsed</Text>
+            <Text style={styles.sundayCardSubtitle}>Non-working weekend days</Text>
+          </View>
+        </View>
+        <Text style={styles.sundayCardValue}>{sundayCount}</Text>
+      </View>
+
       <View style={styles.ratioCard}>
         <View style={styles.ratioLeftFrame}>
           <View style={[styles.iconContainer, { backgroundColor: '#EBF8FF', marginRight: 12 }]}>
@@ -250,7 +279,6 @@ export default function HomeScreen() {
         </Text>
       </View>
 
-      {/* ⏱️ TODAY'S SHIFT REAL-TIME SUMMARY */}
       <View style={styles.sectionHeaderRow}>
         <Ionicons name="time" size={16} color="#2B6CB0" />
         <Text style={styles.sectionHeadingLabel}>Today's Shift Status</Text>
@@ -286,7 +314,6 @@ export default function HomeScreen() {
         </View>
       </View>
 
-      {/* ⏱️ DYNAMIC TODAY'S HOURS WORKED TICKER ACCUMULATOR */}
       <View style={[styles.ratioCard, { backgroundColor: '#F0FDF4', borderColor: '#DCFCE7' }]}>
         <View style={styles.ratioLeftFrame}>
           <View style={[styles.iconContainer, { backgroundColor: '#DCFCE7', marginRight: 12 }]}>
@@ -299,7 +326,6 @@ export default function HomeScreen() {
         </Text>
       </View>
 
-      {/* 📌 SYSTEM NOTICE ANNOUNCEMENT PLUG */}
       <View style={styles.noticeBoardCardFrame}>
         <View style={styles.noticeHeaderRow}>
           <Ionicons name="information-circle" size={18} color="#2B6CB0" style={{ marginRight: 6 }} />
@@ -310,7 +336,6 @@ export default function HomeScreen() {
         </Text>
       </View>
 
-      {/* 📍 FLOATING ACTION COMMAND BUTTON */}
       <TouchableOpacity 
         style={styles.masterActionButtonLauncher}
         activeOpacity={0.85}
@@ -349,6 +374,15 @@ const styles = StyleSheet.create({
   iconContainer: { width: 32, height: 32, borderRadius: 8, justifyContent: 'center', alignItems: 'center', marginBottom: 10 },
   metricCardCountValue: { fontSize: 22, fontWeight: '800', color: '#1A202C' },
   metricCardSublabel: { fontSize: 11, fontWeight: '700', color: '#718096', marginTop: 2 },
+  
+  /* 🏖️ LIGHT YELLOW SUNDAY CARD STYLES */
+  sundayCardBox: { backgroundColor: '#FEFCBF', borderWidth: 1, borderColor: '#FAF089', borderLeftWidth: 4, borderLeftColor: '#D69E2E', padding: 14, borderRadius: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.01, shadowRadius: 4, elevation: 1 },
+  sundayCardLeft: { flexDirection: 'row', alignItems: 'center', flex: 1 },
+  sundayIconCircle: { width: 34, height: 34, borderRadius: 10, backgroundColor: '#FFFFF0', justifyContent: 'center', alignItems: 'center', marginRight: 12, borderWidth: 1, borderColor: '#FEEBC8' },
+  sundayCardTitle: { fontSize: 13, fontWeight: '800', color: '#744210' },
+  sundayCardSubtitle: { fontSize: 11, fontWeight: '600', color: '#975A16', marginTop: 2 },
+  sundayCardValue: { fontSize: 18, fontWeight: '800', color: '#744210' },
+
   ratioCard: { backgroundColor: '#FFFFFF', padding: 14, borderRadius: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.01, shadowRadius: 4, elevation: 1 },
   ratioLeftFrame: { flexDirection: 'row', alignItems: 'center' },
   ratioLabel: { fontSize: 13, fontWeight: '700', color: '#4A5568' },
