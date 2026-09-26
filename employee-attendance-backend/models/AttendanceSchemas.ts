@@ -11,6 +11,7 @@ export interface IEmployeeProfile extends Document {
   password?: string;
   role: string[];
   lunchBreakMinutes?: number; 
+  monthlyCasualLeaveLimit?: number; 
 }
 
 export interface IAttendanceShiftLog extends Document {
@@ -42,6 +43,12 @@ export interface IOfficeLocation extends Document {
   radiusInMeters: number;
 }
 
+export interface IHoliday extends Document {
+  title: string;
+  date: string; // e.g., "August 15, 2026"
+  description?: string;
+}
+
 // ----------------------------------------------------
 // 1. CORE EMPLOYEE REGISTRY SCHEMA
 // ----------------------------------------------------
@@ -52,7 +59,8 @@ const EmployeeProfileSchema = new Schema<IEmployeeProfile>({
   email: { type: String, required: true, unique: true, lowercase: true, trim: true },
   password: { type: String, required: true },
   role: { type: [String], default: ['EMPLOYEE'] },
-  lunchBreakMinutes: { type: Number, default: 0 }
+  lunchBreakMinutes: { type: Number, default: 0 },
+  monthlyCasualLeaveLimit: { type: Number, default: 0 }
 }, { timestamps: true });
 
 // ----------------------------------------------------
@@ -94,6 +102,15 @@ const OfficeLocationSchema = new Schema<IOfficeLocation>({
 }, { timestamps: true });
 
 // ----------------------------------------------------
+// 5. HOLIDAY SCHEMA
+// ----------------------------------------------------
+const HolidaySchema = new Schema<IHoliday>({
+  title: { type: String, required: true },
+  date: { type: String, required: true, unique: true },
+  description: { type: String, default: '' }
+}, { timestamps: true });
+
+// ----------------------------------------------------
 // MODEL EXPORTS
 // ----------------------------------------------------
 export const RegisteredEmployee = (mongoose.models.RegisteredEmployee || 
@@ -107,3 +124,6 @@ export const AdminCredential = (mongoose.models.AdminCredential ||
 
 export const OfficeLocation = (mongoose.models.OfficeLocation || 
   mongoose.model<IOfficeLocation>('OfficeLocation', OfficeLocationSchema)) as Model<IOfficeLocation>;
+
+export const Holiday = (mongoose.models.Holiday || 
+  mongoose.model<IHoliday>('Holiday', HolidaySchema)) as Model<IHoliday>;

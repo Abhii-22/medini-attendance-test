@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert, Linking, ActivityIndicator, Modal, Image, Platform } from 'react-native';
 import { useAuth, API_BASE_URL } from './_layout';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import * as DocumentPicker from 'expo-document-picker';
+import * as XLSX from 'xlsx';
 
 interface EmployeeProfile {
   _id: string;
@@ -11,6 +13,7 @@ interface EmployeeProfile {
   email: string;
   password?: string;
   lunchBreakMinutes?: number;
+  monthlyCasualLeaveLimit?: number;
   role?: string[];
 }
 
@@ -33,10 +36,17 @@ interface OfficeLocationItem {
   radiusInMeters: number;
 }
 
+interface HolidayItem {
+  _id: string;
+  title: string;
+  date: string;
+  description?: string;
+}
+
 export default function AdminScreen() {
   const { logout } = useAuth();
 
-  const [activeTab, setActiveTab] = useState<'REGISTER' | 'LOGS' | 'LOCATIONS'>('REGISTER');
+  const [activeTab, setActiveTab] = useState<'REGISTER' | 'LOCATIONS' | 'HOLIDAYS' | 'CL' | 'LOGS'>('REGISTER');
   const [selectedEmpFilter, setSelectedEmpFilter] = useState<string>('ALL');
   
   const currentMonthName = new Date().toLocaleDateString('en-US', { month: 'long' }); 
@@ -52,6 +62,7 @@ export default function AdminScreen() {
   const [employees, setEmployees] = useState<EmployeeProfile[]>([]);
   const [attendanceLogs, setAttendanceLogs] = useState<AttendanceRecord[]>([]);
   const [officeLocations, setOfficeLocations] = useState<OfficeLocationItem[]>([]);
+  const [holidays, setHolidays] = useState<HolidayItem[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
   const [empSearchQuery, setEmpSearchQuery] = useState<string>('');
@@ -63,6 +74,32 @@ export default function AdminScreen() {
   const [locLng, setLocLng] = useState('');
   const [locRadius, setLocRadius] = useState('50');
 
+  // Holiday form states & calendar modal states
+  const [holidayTitle, setHolidayTitle] = useState('');
+  const [holidayDate, setHolidayDate] = useState('');
+  const [holidayDesc, setHolidayDesc] = useState('');
+  const [showHolidayCalendarModal, setShowHolidayCalendarModal] = useState<boolean>(false);
+  const [calendarViewDate, setCalendarViewDate] = useState<Date>(new Date());
+
+  const year = calendarViewDate.getFullYear();
+  const month = calendarViewDate.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const firstDayIndex = new Date(year, month, 1).getDay();
+  const monthNames = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+  ];
+
+  const handlePrevMonth = () => setCalendarViewDate(new Date(year, month - 1, 1));
+  const handleNextMonth = () => setCalendarViewDate(new Date(year, month + 1, 1));
+
+  const handleSelectCalendarDay = (day: number) => {
+    const selectedObj = new Date(year, month, day);
+    const formatted = selectedObj.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+    setHolidayDate(formatted);
+    setShowHolidayCalendarModal(false);
+  };
+
   const [empName, setEmpName] = useState('');
   const [empIdCode, setEmpIdCode] = useState('');
   const [empDesignation, setEmpDesignation] = useState('');
@@ -73,6 +110,11 @@ export default function AdminScreen() {
   const [selectedLunchMins, setSelectedLunchMins] = useState<number>(0);
   const [showHoursDropdown, setShowHoursDropdown] = useState<boolean>(false);
   const [showMinsDropdown, setShowMinsDropdown] = useState<boolean>(false);
+
+  // 🌿 CL Form States
+  const [clLimitValue, setClLimitValue] = useState<string>('0');
+  const [selectedClEmployeeId, setSelectedClEmployeeId] = useState<string>('ALL');
+  const [showClEmpDropdown, setShowClEmpDropdown] = useState<boolean>(false);
 
   const [showEmpPassword, setShowEmpPassword] = useState<boolean>(false);
 
@@ -97,7 +139,7 @@ export default function AdminScreen() {
   const minutesList = Array.from({ length: 60 }, (_, i) => i);
 
   const calculateWorkingHours = (inTime: string, outTime: string, employeeNameTarget?: string, employeeIdTarget?: string) => {
-    if (!inTime || !outTime || inTime === '--:--' || outTime === '--:--' || inTime === 'ABSENT' || outTime === 'ABSENT' || inTime === 'OFF') {
+    if (!inTime || !outTime || inTime === '--:--' || outTime === '--:--' || inTime === 'ABSENT' || outTime === 'ABSENT' || inTime === 'OFF' || inTime === 'CASUAL LEAVE') {
       return '--';
     }
     try {
@@ -165,10 +207,22 @@ export default function AdminScreen() {
     }
   };
 
+  const fetchHolidaysList = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/admin/holidays`);
+      if (response.ok) {
+        const data = await response.json();
+        setHolidays(data);
+      }
+    } catch (error) {
+      console.error('Failed fetching holidays:', error);
+    }
+  };
+
   const fetchAttendanceLogs = async (filterName: string) => {
     try {
       setIsLoading(true);
-      const response = await fetch(`${API_BASE_URL}/admin/attendance-sheet?employeeName=${filterName}`);
+      const response = await fetch(`${API_BASE_URL}/admin/attendance-sheet?employeeName=${encodeURIComponent(filterName)}`);
       if (response.ok) {
         const data = await response.json();
         setAttendanceLogs(data);
@@ -183,12 +237,15 @@ export default function AdminScreen() {
   useEffect(() => {
     fetchEmployeesList();
     fetchOfficeLocations();
+    fetchHolidaysList();
+  }, []);
+
+  useEffect(() => {
     if (activeTab === 'LOGS') {
       fetchAttendanceLogs(selectedEmpFilter);
     }
   }, [activeTab, selectedEmpFilter]);
 
-  // 🎯 PRECISION DATE PARSER FOR ADMIN TIMELINE SORTING
   const parseDateToTimestamp = (dateStr: string): number => {
     if (!dateStr) return 0;
     const cleanStr = dateStr.replace(',', '').trim();
@@ -209,7 +266,6 @@ export default function AdminScreen() {
     return isNaN(fallback) ? 0 : fallback;
   };
 
-  // 🏖️ GENERATE SUNDAYS & INTERLEAVE STRICTLY INTO PROPER CALENDAR ORDER FOR ADMIN VIEW
   const getCombinedLogsWithSundays = () => {
     const currentYear = new Date().getFullYear();
     const targetMonthIndex = monthNameToIndex[selectedMonthFilter] ?? new Date().getMonth();
@@ -219,43 +275,43 @@ export default function AdminScreen() {
 
     const allDaysMap = new Map<string, AttendanceRecord>();
 
-    // 1. Generate Sundays for the selected month up to today
-    for (let day = 1; day <= totalDays; day++) {
-      const dateObj = new Date(currentYear, targetMonthIndex, day);
-      if (dateObj > today && targetMonthIndex === today.getMonth()) break; 
+    if (selectedEmpFilter !== 'ALL') {
+      for (let day = 1; day <= totalDays; day++) {
+        const dateObj = new Date(currentYear, targetMonthIndex, day);
+        if (dateObj > today && targetMonthIndex === today.getMonth()) break; 
 
-      const formattedDateStr = dateObj.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-      const formattedDayName = dateObj.toLocaleDateString('en-US', { weekday: 'long' });
-      const isSunday = dateObj.getDay() === 0;
+        const formattedDateStr = dateObj.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+        const formattedDayName = dateObj.toLocaleDateString('en-US', { weekday: 'long' });
+        const isSunday = dateObj.getDay() === 0;
 
-      if (isSunday) {
-        allDaysMap.set(formattedDateStr, {
-          _id: `sunday-${formattedDateStr}`,
-          employeeIdReference: selectedEmpFilter !== 'ALL' ? (employees.find(e => e.name === selectedEmpFilter)?.employeeId || 'N/A') : 'MULTIPLE',
-          employeeName: selectedEmpFilter !== 'ALL' ? selectedEmpFilter : 'Sunday Off',
-          date: formattedDateStr,
-          dayOfWeek: formattedDayName,
-          loginTime: 'OFF',
-          logoutTime: 'OFF',
-          isSundayPlaceholder: true
-        });
+        if (isSunday) {
+          const empObj = employees.find(e => e.name === selectedEmpFilter);
+          allDaysMap.set(`${empObj?.employeeId || 'N/A'}_${formattedDateStr}`, {
+            _id: `sunday-${formattedDateStr}`,
+            employeeIdReference: empObj?.employeeId || 'N/A',
+            employeeName: selectedEmpFilter,
+            date: formattedDateStr,
+            dayOfWeek: formattedDayName,
+            loginTime: 'OFF',
+            logoutTime: 'OFF',
+            isSundayPlaceholder: true
+          });
+        }
       }
     }
 
-    // 2. Overlay actual cloud attendance logs (Weekdays / check-ins take priority)
     attendanceLogs.forEach((log) => {
       if (log.date) {
         const timestamp = parseDateToTimestamp(log.date);
+        let standardizedDateStr = log.date;
         if (timestamp > 0) {
-          const standardizedDateStr = new Date(timestamp).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-          allDaysMap.set(standardizedDateStr, log);
-        } else {
-          allDaysMap.set(log.date, log);
+          standardizedDateStr = new Date(timestamp).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
         }
+        const empKey = log.employeeIdReference || log.employeeName || 'UNKNOWN';
+        allDaysMap.set(`${empKey}_${standardizedDateStr}`, log);
       }
     });
 
-    // 3. Convert map to array and sort strictly descending by precise timestamp
     const combined = Array.from(allDaysMap.values());
     combined.sort((a, b) => {
       const timeA = parseDateToTimestamp(a.date);
@@ -320,6 +376,7 @@ export default function AdminScreen() {
     setLogSearchQuery(text);
     if (!text.trim()) {
       setSelectedEmpFilter('ALL');
+      fetchAttendanceLogs('ALL');
       return;
     }
     const matchingEmp = employees.find(
@@ -327,6 +384,7 @@ export default function AdminScreen() {
     );
     if (matchingEmp) {
       setSelectedEmpFilter(matchingEmp.name);
+      fetchAttendanceLogs(matchingEmp.name);
     }
   };
 
@@ -373,6 +431,87 @@ export default function AdminScreen() {
     }
 
     executeServerProvisioning(payload, adminName.trim());
+  };
+
+  const handleSaveCasualLeaveLimit = async () => {
+    const parsedLimit = parseInt(clLimitValue, 10);
+    if (isNaN(parsedLimit) || parsedLimit < 0) {
+      Alert.alert('Invalid Input', 'Please enter a valid monthly CL limit number.');
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      if (selectedClEmployeeId === 'ALL') {
+        const staffList = employees.filter(e => {
+          const r: string[] = Array.isArray(e.role) ? e.role : [e.role || 'EMPLOYEE'];
+          return !r.includes('ADMIN_VIEW');
+        });
+
+        for (const emp of staffList) {
+          await fetch(`${API_BASE_URL}/admin/update-employee`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              _id: emp._id,
+              monthlyCasualLeaveLimit: parsedLimit
+            })
+          });
+        }
+        Alert.alert('Success 🎉', `Monthly Casual Leave limit updated to ${parsedLimit} for ALL employees successfully!`);
+      } else {
+        const response = await fetch(`${API_BASE_URL}/admin/update-employee`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            _id: selectedClEmployeeId,
+            monthlyCasualLeaveLimit: parsedLimit
+          })
+        });
+
+        const result = await response.json();
+        if (response.ok && result.success) {
+          Alert.alert('Success 🎉', `Monthly Casual Leave limit updated to ${parsedLimit} days successfully!`);
+        } else {
+          Alert.alert('Operation Denied', result.message || 'Failed to update CL limit.');
+        }
+      }
+      fetchEmployeesList();
+    } catch (e) {
+      Alert.alert('Connection Error', 'Could not reach server.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleResetEmployeeCl = async (employeeId: string, employeeNameTarget: string) => {
+    Alert.alert('Reset CL Limit ⚠️', `Reset Casual Leave allocation for ${employeeNameTarget} to 0?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Reset',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            const res = await fetch(`${API_BASE_URL}/admin/update-employee`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                _id: employeeId,
+                monthlyCasualLeaveLimit: 0
+              })
+            });
+            if (res.ok) fetchEmployeesList();
+          } catch (e) {
+            Alert.alert('Error', 'Failed to reset employee CL limit.');
+          }
+        }
+      }
+    ]);
+  };
+
+  const handleEditEmployeeClSelect = (emp: EmployeeProfile) => {
+    setSelectedClEmployeeId(emp._id);
+    setClLimitValue(String(emp.monthlyCasualLeaveLimit ?? 0));
   };
 
   const handleCreateLocationSubmit = async () => {
@@ -422,6 +561,128 @@ export default function AdminScreen() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleCreateHolidaySubmit = async () => {
+    if (!holidayTitle || !holidayDate) {
+      Alert.alert('Missing Fields', 'Please provide a Holiday Title and select a Date.');
+      return;
+    }
+    try {
+      setIsLoading(true);
+      const response = await fetch(`${API_BASE_URL}/admin/holidays`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: holidayTitle.trim(),
+          date: holidayDate.trim(),
+          description: holidayDesc.trim()
+        })
+      });
+      const result = await response.json();
+      if (response.ok && result.success) {
+        Alert.alert('Success 🎉', 'Holiday deployed successfully!');
+        setHolidayTitle('');
+        setHolidayDate('');
+        setHolidayDesc('');
+        fetchHolidaysList();
+      } else {
+        Alert.alert('Error', result.message || 'Failed to add holiday.');
+      }
+    } catch (err) {
+      Alert.alert('Connection Error', 'Could not reach server.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // 🌟 EXCEL / CSV HOLIDAYS BULK IMPORT HANDLER
+  const handleExcelImport = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: [
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'application/vnd.ms-excel',
+          'text/csv'
+        ],
+        copyToCacheDirectory: true,
+      });
+
+      if (result.canceled || !result.assets || result.assets.length === 0) {
+        return;
+      }
+
+      const fileUri = result.assets[0].uri;
+      setIsLoading(true);
+
+      const response = await fetch(fileUri);
+      const blob = await response.blob();
+      const reader = new FileReader();
+
+      reader.onload = async (e) => {
+        try {
+          const data = new Uint8Array(e.target?.result as ArrayBuffer);
+          const workbook = XLSX.read(data, { type: 'array' });
+          
+          const sheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[sheetName];
+          const jsonData: any[] = XLSX.utils.sheet_to_json(worksheet);
+
+          const formattedHolidays = jsonData.map((row) => ({
+            title: row['Title'] || row['title'] || row['Holiday'] || '',
+            date: row['Date'] || row['date'] || '',
+            description: row['Description'] || row['description'] || ''
+          })).filter(h => h.title && h.date);
+
+          if (formattedHolidays.length === 0) {
+            Alert.alert('Import Error', 'No valid holiday rows found. Ensure columns are named "Title" and "Date".');
+            setIsLoading(false);
+            return;
+          }
+
+          const apiRes = await fetch(`${API_BASE_URL}/admin/holidays/bulk`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ holidays: formattedHolidays })
+          });
+
+          const apiResult = await apiRes.json();
+          if (apiRes.ok && apiResult.success) {
+            Alert.alert('Success 🎉', apiResult.message);
+            fetchHolidaysList();
+          } else {
+            Alert.alert('Error', apiResult.message || 'Failed to import holidays.');
+          }
+        } catch (parseErr) {
+          Alert.alert('Parsing Error', 'Could not read spreadsheet structure.');
+        } finally {
+          setIsLoading(false);
+        }
+      };
+
+      reader.readAsArrayBuffer(blob);
+    } catch (err) {
+      setIsLoading(false);
+      Alert.alert('Error', 'Failed to pick or read document.');
+    }
+  };
+
+  const handleDeleteHolidayTrigger = async (id: string, title: string) => {
+    Alert.alert('Delete Holiday ⚠️', `Remove holiday "${title}"?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            const res = await fetch(`${API_BASE_URL}/admin/holidays/${id}`, { method: 'DELETE' });
+            if (res.ok) fetchHolidaysList();
+          } catch (e) {
+            Alert.alert('Error', 'Failed to delete holiday.');
+          }
+        }
+      }
+    ]);
   };
 
   const handleSelectEditLocation = (item: OfficeLocationItem) => {
@@ -564,7 +825,6 @@ export default function AdminScreen() {
     setShowAdminPassword(false);
   };
 
-  // 📊 CALCULATE SUMMARY & EXPORT CSV WITH PRESENT, ABSENT, AND SUNDAYS
   const handleDownloadReport = () => {
     let presentCount = 0;
     let absentCount = 0;
@@ -581,7 +841,6 @@ export default function AdminScreen() {
       }
     });
 
-    // Build CSV Content including Summary Metrics at top
     let csvHeader = `Attendance Report (${selectedMonthFilter} ${new Date().getFullYear()})\n`;
     csvHeader += `Employee Filter,${selectedEmpFilter}\n`;
     csvHeader += `Total Days Present,${presentCount}\n`;
@@ -607,9 +866,8 @@ export default function AdminScreen() {
       link.click();
       document.body.removeChild(link);
     } else {
-      // Fallback to backend endpoint export if native
       const currentYearString = new Date().getFullYear().toString();
-      const downloadUrl = `${API_BASE_URL}/admin/download-attendance?employeeName=${selectedEmpFilter}&month=${selectedMonthFilter}&year=${currentYearString}&includeWorkingHours=true`;
+      const downloadUrl = `${API_BASE_URL}/admin/download-attendance?employeeName=${encodeURIComponent(selectedEmpFilter)}&month=${selectedMonthFilter}&year=${currentYearString}&includeWorkingHours=true`;
       Linking.openURL(downloadUrl).catch(() => {
         Alert.alert('Download Error', 'Could not connect to spreadsheet download engine.');
       });
@@ -656,16 +914,24 @@ export default function AdminScreen() {
 
       <View style={styles.menuToggleRow}>
         <TouchableOpacity style={[styles.menuTab, activeTab === 'REGISTER' && styles.activeMenuTab]} onPress={() => { setActiveTab('REGISTER'); clearAllFormStates(); }}>
-          <Ionicons name="person-add-outline" size={13} color={activeTab === 'REGISTER' ? '#007AFF' : '#718096'} style={{ marginRight: 4 }} />
-          <Text style={[styles.menuTabText, activeTab === 'REGISTER' && styles.activeMenuTabText]}>Provisioning</Text>
+          <Ionicons name="person-add-outline" size={12} color={activeTab === 'REGISTER' ? '#007AFF' : '#718096'} style={{ marginRight: 2 }} />
+          <Text style={[styles.menuTabText, activeTab === 'REGISTER' && styles.activeMenuTabText]} numberOfLines={1}>Provision</Text>
         </TouchableOpacity>
         <TouchableOpacity style={[styles.menuTab, activeTab === 'LOCATIONS' && styles.activeMenuTab]} onPress={() => { setActiveTab('LOCATIONS'); clearLocationFormStates(); }}>
-          <Ionicons name="location-outline" size={13} color={activeTab === 'LOCATIONS' ? '#007AFF' : '#718096'} style={{ marginRight: 4 }} />
-          <Text style={[styles.menuTabText, activeTab === 'LOCATIONS' && styles.activeMenuTabText]}>Locations</Text>
+          <Ionicons name="location-outline" size={12} color={activeTab === 'LOCATIONS' ? '#007AFF' : '#718096'} style={{ marginRight: 2 }} />
+          <Text style={[styles.menuTabText, activeTab === 'LOCATIONS' && styles.activeMenuTabText]} numberOfLines={1}>Locations</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[styles.menuTab, activeTab === 'LOGS' && styles.activeMenuTab]} onPress={() => setActiveTab('LOGS')}>
-          <Ionicons name="newspaper-outline" size={13} color={activeTab === 'LOGS' ? '#007AFF' : '#718096'} style={{ marginRight: 4 }} />
-          <Text style={[styles.menuTabText, activeTab === 'LOGS' && styles.activeMenuTabText]}>Logs Sheet</Text>
+        <TouchableOpacity style={[styles.menuTab, activeTab === 'HOLIDAYS' && styles.activeMenuTab]} onPress={() => setActiveTab('HOLIDAYS')}>
+          <Ionicons name="gift-outline" size={12} color={activeTab === 'HOLIDAYS' ? '#007AFF' : '#718096'} style={{ marginRight: 2 }} />
+          <Text style={[styles.menuTabText, activeTab === 'HOLIDAYS' && styles.activeMenuTabText]} numberOfLines={1}>Holidays</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.menuTab, activeTab === 'CL' && styles.activeMenuTab]} onPress={() => setActiveTab('CL')}>
+          <Ionicons name="calendar-number-outline" size={12} color={activeTab === 'CL' ? '#007AFF' : '#718096'} style={{ marginRight: 2 }} />
+          <Text style={[styles.menuTabText, activeTab === 'CL' && styles.activeMenuTabText]} numberOfLines={1}>CL Limit</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.menuTab, activeTab === 'LOGS' && styles.activeMenuTab]} onPress={() => { setActiveTab('LOGS'); fetchAttendanceLogs(selectedEmpFilter); }}>
+          <Ionicons name="newspaper-outline" size={12} color={activeTab === 'LOGS' ? '#007AFF' : '#718096'} style={{ marginRight: 2 }} />
+          <Text style={[styles.menuTabText, activeTab === 'LOGS' && styles.activeMenuTabText]} numberOfLines={1}>Logs</Text>
         </TouchableOpacity>
       </View>
 
@@ -850,6 +1116,7 @@ export default function AdminScreen() {
                       <Text style={styles.empRowSub}>
                         {item.designation}  •  <Text style={{ fontWeight: '800' }}>{isAdminView ? 'ADMIN_VIEW' : 'EMPLOYEE'}</Text>
                         {item.lunchBreakMinutes !== undefined && item.lunchBreakMinutes > 0 ? ` • ${item.lunchBreakMinutes}m Lunch` : ''}
+                        {!isAdminView ? ` • ${item.monthlyCasualLeaveLimit ?? 0} CL Limit` : ''}
                       </Text>
                     </View>
                     <View style={styles.crudActionRow}>
@@ -943,6 +1210,146 @@ export default function AdminScreen() {
         </ScrollView>
       )}
 
+      {activeTab === 'HOLIDAYS' && (
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
+          <View style={styles.formCard}>
+            <View style={styles.cardHeaderRow}>
+              <Ionicons name="gift-outline" size={16} color="#DD6B20" />
+              <Text style={[styles.sectionHeading, { color: '#DD6B20' }]}>Add Company Holiday</Text>
+            </View>
+
+            <Text style={styles.inputLabel}>Holiday Title</Text>
+            <TextInput style={styles.input} value={holidayTitle} onChangeText={setHolidayTitle} placeholder="e.g. Independence Day" placeholderTextColor="#A0AEC0" />
+
+            <Text style={styles.inputLabel}>Holiday Date</Text>
+            <TouchableOpacity 
+              style={[styles.input, { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }]} 
+              onPress={() => setShowHolidayCalendarModal(true)}
+              activeOpacity={0.8}
+            >
+              <Text style={{ fontSize: 14, color: holidayDate ? '#2D3748' : '#A0AEC0', fontWeight: holidayDate ? '700' : '400' }}>
+                {holidayDate || 'Select date from calendar...'}
+              </Text>
+              <Ionicons name="calendar-outline" size={18} color="#718096" />
+            </TouchableOpacity>
+
+            <Text style={styles.inputLabel}>Description (Optional)</Text>
+            <TextInput style={styles.input} value={holidayDesc} onChangeText={setHolidayDesc} placeholder="National Holiday" placeholderTextColor="#A0AEC0" />
+
+            <TouchableOpacity style={[styles.submitButton, { backgroundColor: '#DD6B20', marginTop: 15 }]} onPress={handleCreateHolidaySubmit}>
+              <Ionicons name="gift-outline" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
+              <Text style={styles.submitButtonText}>Deploy Holiday Card</Text>
+            </TouchableOpacity>
+
+            {/* 🌟 EXCEL / CSV BULK IMPORT BUTTON */}
+            <TouchableOpacity style={[styles.submitButton, { backgroundColor: '#38A169', marginTop: 12 }]} onPress={handleExcelImport}>
+              <Ionicons name="document-text-outline" size={15} color="#FFFFFF" style={{ marginRight: 6 }} />
+              <Text style={styles.submitButtonText}>📁 Import Holidays from Excel / CSV</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.sectionHeaderRowInline}>
+            <Ionicons name="calendar-outline" size={15} color="#2B6CB0" />
+            <Text style={styles.sectionHeadingLabelInline}>Active Holidays Directory</Text>
+          </View>
+
+          <View style={styles.directoryCard}>
+            {holidays.length === 0 ? (
+              <Text style={styles.emptyTextSub}>No holidays configured in database.</Text>
+            ) : (
+              holidays.map((hol) => (
+                <View key={hol._id} style={styles.employeeRowItem}>
+                  <View style={[styles.avatarCircle, { backgroundColor: '#FFFAF0', borderColor: '#FBD38D' }]}>
+                    <Ionicons name="gift" size={16} color="#DD6B20" />
+                  </View>
+                  <View style={styles.employeeInfoBox}>
+                    <Text style={styles.empRowName}>{hol.title}</Text>
+                    <Text style={styles.empRowSub}>{hol.date} {hol.description ? `• ${hol.description}` : ''}</Text>
+                  </View>
+                  <TouchableOpacity style={styles.actionPillDelete} onPress={() => handleDeleteHolidayTrigger(hol._id, hol.title)}>
+                    <Text style={styles.actionPillTextDelete}>Remove</Text>
+                  </TouchableOpacity>
+                </View>
+              ))
+            )}
+          </View>
+        </ScrollView>
+      )}
+
+      {activeTab === 'CL' && (
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
+          <View style={[styles.formCard, { borderTopColor: '#DD6B20', borderTopWidth: 4 }]}>
+            <View style={styles.cardHeaderRow}>
+              <Ionicons name="calendar-number-outline" size={16} color="#DD6B20" />
+              <Text style={[styles.sectionHeading, { color: '#DD6B20' }]}>Configure Monthly Casual Leave (CL)</Text>
+            </View>
+
+            <Text style={styles.inputLabel}>Apply Scope</Text>
+            <TouchableOpacity style={styles.dropdownTriggerBtn} onPress={() => setShowClEmpDropdown(true)}>
+              <Text style={styles.dropdownValueText}>
+                {selectedClEmployeeId === 'ALL' 
+                  ? '🌐 Apply to All Employees' 
+                  : employees.find(e => e._id === selectedClEmployeeId)?.name ? `👤 ${employees.find(e => e._id === selectedClEmployeeId)?.name}` : 'Select Employee...'}
+              </Text>
+              <Ionicons name="chevron-down" size={16} color="#718096" />
+            </TouchableOpacity>
+
+            <Text style={styles.inputLabel}>Allowed Casual Leaves (CL) Per Month</Text>
+            <TextInput 
+              style={styles.input} 
+              value={clLimitValue} 
+              onChangeText={setClLimitValue} 
+              placeholder="e.g. 2" 
+              placeholderTextColor="#A0AEC0" 
+              keyboardType="numeric" 
+            />
+            <Text style={styles.lunchSummaryNote}>
+              Note: Unexcused absences starting from the first absent day of the month will automatically convert to Casual Leave (CL) up to this limit.
+            </Text>
+
+            <TouchableOpacity style={[styles.submitButton, { backgroundColor: '#DD6B20', marginTop: 10 }]} onPress={handleSaveCasualLeaveLimit}>
+              <Ionicons name="checkmark-circle-outline" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
+              <Text style={styles.submitButtonText}>Save Casual Leave Allocation</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.sectionHeaderRowInline}>
+            <Ionicons name="people-outline" size={15} color="#2B6CB0" />
+            <Text style={styles.sectionHeadingLabelInline}>Active Employee Casual Leave Directory</Text>
+          </View>
+
+          <View style={styles.directoryCard}>
+            {employees.filter(e => !Array.isArray(e.role) ? e.role !== 'ADMIN_VIEW' : !e.role.includes('ADMIN_VIEW')).length === 0 ? (
+              <Text style={styles.emptyTextSub}>No active employees registered.</Text>
+            ) : (
+              employees
+                .filter(e => !Array.isArray(e.role) ? e.role !== 'ADMIN_VIEW' : !e.role.includes('ADMIN_VIEW'))
+                .map((emp) => (
+                  <View key={emp._id} style={styles.employeeRowItem}>
+                    <View style={[styles.avatarCircle, { backgroundColor: '#FFFAF0', borderColor: '#FBD38D' }]}>
+                      <Ionicons name="calendar-number" size={16} color="#DD6B20" />
+                    </View>
+                    <View style={styles.employeeInfoBox}>
+                      <Text style={styles.empRowName}>{emp.name} <Text style={styles.empRowId}>({emp.employeeId})</Text></Text>
+                      <Text style={styles.empRowSub}>
+                        Monthly CL Allowance: <Text style={{ fontWeight: '800', color: '#DD6B20' }}>{emp.monthlyCasualLeaveLimit ?? 0} Days</Text>
+                      </Text>
+                    </View>
+                    <View style={styles.crudActionRow}>
+                      <TouchableOpacity style={styles.actionPillEdit} onPress={() => handleEditEmployeeClSelect(emp)}>
+                        <Text style={styles.actionPillTextEdit}>Edit</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.actionPillDelete} onPress={() => handleResetEmployeeCl(emp._id, emp.name)}>
+                        <Text style={styles.actionPillTextDelete}>Reset</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ))
+            )}
+          </View>
+        </ScrollView>
+      )}
+
       {activeTab === 'LOGS' && (
         <View style={{ flex: 1 }}>
           <View style={styles.sectionHeaderRowInline}>
@@ -970,7 +1377,7 @@ export default function AdminScreen() {
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
               <TouchableOpacity 
                 style={[styles.filterPill, selectedEmpFilter === 'ALL' && styles.activeFilterPill]} 
-                onPress={() => { setSelectedEmpFilter('ALL'); setLogSearchQuery(''); }}
+                onPress={() => { setSelectedEmpFilter('ALL'); fetchAttendanceLogs('ALL'); setLogSearchQuery(''); }}
               >
                 <Text style={[styles.filterPillText, selectedEmpFilter === 'ALL' && styles.activeFilterPillText]}>🌐 Global Workforce</Text>
               </TouchableOpacity>
@@ -978,7 +1385,7 @@ export default function AdminScreen() {
                 <TouchableOpacity 
                   key={emp._id} 
                   style={[styles.filterPill, selectedEmpFilter === emp.name && styles.activeFilterPill]} 
-                  onPress={() => { setSelectedEmpFilter(emp.name); setLogSearchQuery(emp.name); }}
+                  onPress={() => { setSelectedEmpFilter(emp.name); fetchAttendanceLogs(emp.name); setLogSearchQuery(emp.name); }}
                 >
                   <Text style={[styles.filterPillText, selectedEmpFilter === emp.name && styles.activeFilterPillText]}>👤 {emp.name}</Text>
                 </TouchableOpacity>
@@ -1085,6 +1492,119 @@ export default function AdminScreen() {
         </View>
       )}
 
+      {/* 📅 CALENDAR PICKER MODAL FOR HOLIDAY DATE */}
+      <Modal
+        visible={showHolidayCalendarModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowHolidayCalendarModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.calendarModalCardContent}>
+            
+            <View style={styles.calendarModalHeader}>
+              <TouchableOpacity onPress={handlePrevMonth} style={styles.calendarNavBtn}>
+                <Ionicons name="chevron-back" size={20} color="#2D3748" />
+              </TouchableOpacity>
+              
+              <Text style={styles.calendarModalTitleText}>
+                {monthNames[month]} {year}
+              </Text>
+              
+              <TouchableOpacity onPress={handleNextMonth} style={styles.calendarNavBtn}>
+                <Ionicons name="chevron-forward" size={20} color="#2D3748" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.calendarWeekDaysRow}>
+              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d, index) => (
+                <Text key={index} style={styles.calendarWeekDayText}>{d}</Text>
+              ))}
+            </View>
+
+            <View style={styles.calendarDaysGrid}>
+              {Array.from({ length: firstDayIndex }).map((_, idx) => (
+                <View key={`empty-${idx}`} style={styles.calendarDayCell} />
+              ))}
+
+              {Array.from({ length: daysInMonth }).map((_, idx) => {
+                const dayNum = idx + 1;
+                const cellObj = new Date(year, month, dayNum);
+                const cellFormatted = cellObj.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+                const isSelected = holidayDate === cellFormatted;
+
+                return (
+                  <TouchableOpacity
+                    key={dayNum}
+                    style={[styles.calendarDayCell, isSelected && { backgroundColor: '#DD6B20', borderRadius: 10 }]}
+                    onPress={() => handleSelectCalendarDay(dayNum)}
+                  >
+                    <Text style={[styles.calendarDayCellText, isSelected && { color: '#FFFFFF' }]}>
+                      {dayNum}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <View style={styles.calendarModalFooter}>
+              <TouchableOpacity 
+                style={styles.calendarCloseBtn} 
+                onPress={() => setShowHolidayCalendarModal(false)}
+              >
+                <Text style={styles.calendarCloseBtnText}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+
+          </View>
+        </View>
+      </Modal>
+
+      {/* 🌿 CL EMPLOYEE SELECTOR MODAL */}
+      <Modal
+        visible={showClEmpDropdown}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowClEmpDropdown(false)}
+      >
+        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowClEmpDropdown(false)}>
+          <View style={styles.dropdownModalCard}>
+            <Text style={styles.dropdownModalTitle}>Select Target Scope</Text>
+            <ScrollView style={{ maxHeight: 250 }}>
+              <TouchableOpacity
+                style={[styles.dropdownItem, selectedClEmployeeId === 'ALL' && styles.activeDropdownItem]}
+                onPress={() => {
+                  setSelectedClEmployeeId('ALL');
+                  setShowClEmpDropdown(false);
+                }}
+              >
+                <Text style={[styles.dropdownItemText, selectedClEmployeeId === 'ALL' && styles.activeDropdownItemText]}>
+                  🌐 Apply to All Employees
+                </Text>
+                {selectedClEmployeeId === 'ALL' && <Ionicons name="checkmark" size={16} color="#007AFF" />}
+              </TouchableOpacity>
+
+              {employees.filter(e => !Array.isArray(e.role) ? e.role !== 'ADMIN_VIEW' : !e.role.includes('ADMIN_VIEW')).map(emp => (
+                <TouchableOpacity
+                  key={emp._id}
+                  style={[styles.dropdownItem, selectedClEmployeeId === emp._id && styles.activeDropdownItem]}
+                  onPress={() => {
+                    setSelectedClEmployeeId(emp._id);
+                    setClLimitValue(String(emp.monthlyCasualLeaveLimit ?? 0));
+                    setShowClEmpDropdown(false);
+                  }}
+                >
+                  <Text style={[styles.dropdownItemText, selectedClEmployeeId === emp._id && styles.activeDropdownItemText]}>
+                    👤 {emp.name} ({emp.employeeId})
+                  </Text>
+                  {selectedClEmployeeId === emp._id && <Ionicons name="checkmark" size={16} color="#007AFF" />}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
       <Modal
         visible={showHoursDropdown}
         transparent={true}
@@ -1169,7 +1689,7 @@ const styles = StyleSheet.create({
   menuToggleRow: { flexDirection: 'row', backgroundColor: '#E2E8F0', padding: 4, borderRadius: 14, marginBottom: 18 },
   menuTab: { flex: 1, paddingVertical: 12, alignItems: 'center', borderRadius: 10, flexDirection: 'row', justifyContent: 'center' },
   activeMenuTab: { backgroundColor: '#FFFFFF', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 2 },
-  menuTabText: { fontSize: 11, fontWeight: '700', color: '#718096' },
+  menuTabText: { fontSize: 10, fontWeight: '700', color: '#718096' },
   activeMenuTabText: { color: '#007AFF' },
   formCard: { backgroundColor: '#FFFFFF', padding: 16, borderRadius: 16, marginBottom: 16, borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.01, shadowRadius: 4, elevation: 1 },
   cardHeaderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
@@ -1238,5 +1758,79 @@ const styles = StyleSheet.create({
   dropdownItem: { paddingVertical: 12, paddingHorizontal: 16, borderBottomWidth: 1, borderBottomColor: '#EDF2F7', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   activeDropdownItem: { backgroundColor: '#EBF8FF' },
   dropdownItemText: { fontSize: 13, color: '#4A5568', fontWeight: '600' },
-  activeDropdownItemText: { color: '#007AFF', fontWeight: '800' }
+  activeDropdownItemText: { color: '#007AFF', fontWeight: '800' },
+  calendarModalCardContent: {
+    width: '100%',
+    maxWidth: 330,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    elevation: 10
+  },
+  calendarModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16
+  },
+  calendarNavBtn: {
+    padding: 6,
+    backgroundColor: '#EDF2F7',
+    borderRadius: 10
+  },
+  calendarModalTitleText: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#1A202C'
+  },
+  calendarWeekDaysRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 8
+  },
+  calendarWeekDayText: {
+    width: '14.28%',
+    textAlign: 'center',
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#A0AEC0'
+  },
+  calendarDaysGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    width: '100%'
+  },
+  calendarDayCell: {
+    width: '14.28%',
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginVertical: 2
+  },
+  calendarDayCellText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#2D3748'
+  },
+  calendarModalFooter: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#EDF2F7',
+    paddingTop: 12
+  },
+  calendarCloseBtn: {
+    backgroundColor: '#EDF2F7',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 10
+  },
+  calendarCloseBtnText: {
+    color: '#4A5568',
+    fontSize: 12,
+    fontWeight: '700'
+  }
 });

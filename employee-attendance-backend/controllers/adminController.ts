@@ -1,8 +1,8 @@
 import type { Request, Response } from 'express';
-import { RegisteredEmployee, AttendanceShiftLog, OfficeLocation } from '../models/AttendanceSchemas.js';
+import { RegisteredEmployee, AttendanceShiftLog, OfficeLocation, Holiday } from '../models/AttendanceSchemas.js';
 
 export const registerEmployee = async (req: Request, res: Response): Promise<any> => {
-  const { email, employeeId, name, designation, password, role, lunchBreakMinutes } = req.body;
+  const { email, employeeId, name, designation, password, role, lunchBreakMinutes, monthlyCasualLeaveLimit } = req.body;
 
   if (!email || !employeeId || !name || !password) {
     return res.status(400).json({ 
@@ -41,6 +41,7 @@ export const registerEmployee = async (req: Request, res: Response): Promise<any
     }
 
     const parsedLunchMinutes = lunchBreakMinutes !== undefined && lunchBreakMinutes !== null ? Number(lunchBreakMinutes) : 0;
+    const parsedClLimit = monthlyCasualLeaveLimit !== undefined && monthlyCasualLeaveLimit !== null ? Number(monthlyCasualLeaveLimit) : 0;
 
     const newEmployee = new RegisteredEmployee({
       name: name.trim(),
@@ -49,7 +50,8 @@ export const registerEmployee = async (req: Request, res: Response): Promise<any
       email: searchEmail,
       password: password, 
       role: [targetRole],
-      lunchBreakMinutes: isNaN(parsedLunchMinutes) ? 0 : parsedLunchMinutes
+      lunchBreakMinutes: isNaN(parsedLunchMinutes) ? 0 : parsedLunchMinutes,
+      monthlyCasualLeaveLimit: isNaN(parsedClLimit) ? 0 : parsedClLimit
     });
 
     await newEmployee.save();
@@ -66,18 +68,17 @@ export const getEmployees = async (_req: Request, res: Response) => {
 };
 
 export const updateEmployee = async (req: Request, res: Response): Promise<any> => {
-  const { _id, name, designation, email, password, role, lunchBreakMinutes } = req.body;
+  const { _id, name, designation, email, password, role, lunchBreakMinutes, monthlyCasualLeaveLimit } = req.body;
 
   if (!_id) {
     return res.status(400).json({ success: false, message: "Missing document reference identifier." });
   }
 
   try {
-    const updatePayload: any = {
-      name: name.trim(),
-      designation: designation.trim(),
-      email: email.trim().toLowerCase()
-    };
+    const updatePayload: any = {};
+    if (name !== undefined) updatePayload.name = String(name).trim();
+    if (designation !== undefined) updatePayload.designation = String(designation).trim();
+    if (email !== undefined) updatePayload.email = String(email).trim().toLowerCase();
 
     if (password && String(password).trim() !== '') {
       updatePayload.password = password;
@@ -86,6 +87,11 @@ export const updateEmployee = async (req: Request, res: Response): Promise<any> 
     if (lunchBreakMinutes !== undefined && lunchBreakMinutes !== null) {
       const parsedLunchMinutes = Number(lunchBreakMinutes);
       updatePayload.lunchBreakMinutes = isNaN(parsedLunchMinutes) ? 0 : parsedLunchMinutes;
+    }
+
+    if (monthlyCasualLeaveLimit !== undefined && monthlyCasualLeaveLimit !== null) {
+      const parsedCl = Number(monthlyCasualLeaveLimit);
+      updatePayload.monthlyCasualLeaveLimit = isNaN(parsedCl) ? 0 : parsedCl;
     }
 
     if (role) {
@@ -129,7 +135,15 @@ export const getAttendanceSheet = async (req: Request, res: Response): Promise<a
     
     const sheets = await AttendanceShiftLog.find(filter).sort({ createdAt: -1 });
 
-    // 🌟 AUTOMATIC LAZY ABSENT INJECTION FOR PAST COMPLETED DAYS ONLY (STRICTLY EXCLUDES TODAY)
+    const allHolidays = await Holiday.find({});
+    const holidaysMap = new Map<string, string>();
+    allHolidays.forEach((h: any) => {
+      if (h.date) {
+        const cleanDate = h.date.replace(',', '').replace(/\s+/g, ' ').toLowerCase().trim();
+        holidaysMap.set(cleanDate, h.title);
+      }
+    });
+
     const allEmployees = await RegisteredEmployee.find();
     const targetEmployees = employeeName !== 'ALL' 
       ? allEmployees.filter(e => e.name.toLowerCase() === employeeName.toLowerCase())
@@ -150,44 +164,69 @@ export const getAttendanceSheet = async (req: Request, res: Response): Promise<a
       existingLogsMap.set(`${log.employeeIdReference}_${log.date}`, true);
     });
 
-    let newlyDetectedAbsentLogs: any[] = [];
+    let newlyDetectedLogs: any[] = [];
 
     for (const emp of targetEmployees) {
-      // Loop strictly through past days of the month (day < todayDateNum)
+      let absentCounterForMonth = 0;
+      const empAny = emp as any;
+      const monthlyClLimit = empAny.monthlyCasualLeaveLimit !== undefined ? Number(empAny.monthlyCasualLeaveLimit) : 0;
+
       for (let day = 1; day < todayDateNum; day++) {
         const dateObj = new Date(currentYear, currentMonth, day);
-        
-        // Skip Sundays
+        if (dateObj > now) break; // 🌟 Strictly stop at today
         if (dateObj.getDay() === 0) continue;
 
         const formattedDateStr = dateObj.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-        
-        // Strict safety check: Never mark today as absent
         if (formattedDateStr === todayString) continue;
 
+        const cleanFormattedDateStr = formattedDateStr.replace(',', '').replace(/\s+/g, ' ').toLowerCase().trim();
+        const holidayTitle = holidaysMap.get(cleanFormattedDateStr);
         const dayOfWeekStr = dateObj.toLocaleDateString('en-US', { weekday: 'long' });
         const uniqueKey = `${emp.employeeId}_${formattedDateStr}`;
 
         if (!existingLogsMap.has(uniqueKey)) {
-          newlyDetectedAbsentLogs.push({
-            _id: `absent-${emp.employeeId}-${formattedDateStr}`,
-            employeeIdReference: emp.employeeId,
-            employeeName: emp.name,
-            date: formattedDateStr,
-            dayOfWeek: dayOfWeekStr,
-            loginTime: 'ABSENT',
-            logoutTime: 'ABSENT',
-            capturedPhotoInUri: '',
-            capturedPhotoOutUri: '',
-            locationInAddress: '',
-            locationOutAddress: '',
-            isVirtualAbsent: true
-          });
+          if (holidayTitle) {
+            newlyDetectedLogs.push({
+              _id: `holiday-${emp.employeeId}-${formattedDateStr}`,
+              employeeIdReference: emp.employeeId,
+              employeeName: emp.name,
+              date: formattedDateStr,
+              dayOfWeek: dayOfWeekStr,
+              loginTime: 'HOLIDAY',
+              logoutTime: 'HOLIDAY',
+              capturedPhotoInUri: '',
+              capturedPhotoOutUri: '',
+              locationInAddress: '',
+              locationOutAddress: '',
+              isHolidayPlaceholder: true,
+              holidayTitle: holidayTitle
+            });
+          } else {
+            absentCounterForMonth++;
+            const isCl = absentCounterForMonth <= monthlyClLimit;
+
+            newlyDetectedLogs.push({
+              _id: `${isCl ? 'cl' : 'absent'}-${emp.employeeId}-${formattedDateStr}`,
+              employeeIdReference: emp.employeeId,
+              employeeName: emp.name,
+              date: formattedDateStr,
+              dayOfWeek: dayOfWeekStr,
+              loginTime: isCl ? 'CASUAL LEAVE' : 'ABSENT',
+              logoutTime: isCl ? 'CASUAL LEAVE' : 'ABSENT',
+              capturedPhotoInUri: '',
+              capturedPhotoOutUri: '',
+              locationInAddress: '',
+              locationOutAddress: '',
+              isVirtualAbsent: !isCl,
+              isCasualLeave: isCl,
+              holidayTitle: isCl ? 'Casual Leave (CL)' : undefined
+            });
+          }
         }
       }
     }
 
-    const combined = [...sheets, ...newlyDetectedAbsentLogs];
+    const combined = [...sheets, ...newlyDetectedLogs];
     combined.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
     return res.status(200).json(combined);
@@ -204,16 +243,30 @@ export const downloadAttendance = async (req: Request, res: Response): Promise<a
 
     const allEmployees = await RegisteredEmployee.find({});
     const employeeLunchMap: { [key: string]: number } = {};
+
     allEmployees.forEach((emp: any) => {
-      if (emp.employeeId) employeeLunchMap[emp.employeeId.toUpperCase()] = emp.lunchBreakMinutes || 0;
-      if (emp.name) employeeLunchMap[emp.name.toLowerCase().trim()] = emp.lunchBreakMinutes || 0;
+      if (emp.employeeId) {
+        employeeLunchMap[emp.employeeId.toUpperCase()] = emp.lunchBreakMinutes || 0;
+      }
+      if (emp.name) {
+        employeeLunchMap[emp.name.toLowerCase().trim()] = emp.lunchBreakMinutes || 0;
+      }
+    });
+
+    const allHolidays = await Holiday.find({});
+    const holidaysMap = new Map<string, string>();
+    allHolidays.forEach((h: any) => {
+      if (h.date) {
+        const cleanDate = h.date.replace(',', '').replace(/\s+/g, ' ').toLowerCase().trim();
+        holidaysMap.set(cleanDate, h.title);
+      }
     });
 
     const queryFilter = employeeName !== 'ALL' ? { employeeName } : {};
     const records = await AttendanceShiftLog.find(queryFilter).sort({ date: -1 });
 
     const calculateServerWorkingHours = (inTime: string, outTime: string, lunchBreakMinutes: number = 0): string => {
-      if (!inTime || !outTime || inTime === '--:--' || outTime === '--:--' || inTime === 'ABSENT' || outTime === 'ABSENT' || inTime === 'OFF') {
+      if (!inTime || !outTime || inTime === '--:--' || outTime === '--:--' || inTime === 'ABSENT' || outTime === 'ABSENT' || inTime === 'OFF' || inTime === 'HOLIDAY' || inTime === 'CASUAL LEAVE') {
         return '--';
       }
       try {
@@ -248,14 +301,6 @@ export const downloadAttendance = async (req: Request, res: Response): Promise<a
       }
     };
 
-    const filteredRecords = records.filter((log: any) => {
-      if (!log.date) return false;
-      const logDateLower = log.date.toLowerCase();
-      const matchesMonth = filterMonth ? logDateLower.includes(filterMonth.toLowerCase()) : true;
-      const matchesYear = filterYear ? logDateLower.includes(filterYear) : true;
-      return matchesMonth && matchesYear;
-    });
-
     const monthNameToIndex: { [key: string]: number } = {
       January: 0, February: 1, March: 2, April: 3, May: 4, June: 5,
       July: 6, August: 7, September: 8, October: 9, November: 10, December: 11
@@ -266,48 +311,98 @@ export const downloadAttendance = async (req: Request, res: Response): Promise<a
     const totalDaysInMonth = new Date(targetYearNum, targetMonthIndex + 1, 0).getDate();
     const today = new Date();
 
-    const allDaysMap = new Map<string, any>();
-
-    for (let day = 1; day <= totalDaysInMonth; day++) {
-      const dateObj = new Date(targetYearNum, targetMonthIndex, day);
-      if (dateObj > today && targetMonthIndex === today.getMonth()) break; 
-
-      if (dateObj.getDay() === 0) {
-        const formattedDateStr = dateObj.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-        const targetEmpName = employeeName !== 'ALL' ? employeeName : (allEmployees[0]?.name || 'Employee');
-        const targetEmpId = employeeName !== 'ALL' ? (allEmployees.find(e => e.name === employeeName)?.employeeId || 'N/A') : 'MULTIPLE';
-
-        allDaysMap.set(formattedDateStr, {
-          employeeName: targetEmpName,
-          employeeIdReference: targetEmpId,
-          date: formattedDateStr,
-          dayOfWeek: 'Sunday',
-          loginTime: 'OFF',
-          logoutTime: 'OFF',
-          locationInAddress: 'Non-Working Day',
-          locationOutAddress: 'Non-Working Day',
-          isSundayPlaceholder: true
+    const targetEmployeesList = employeeName !== 'ALL' 
+      ? allEmployees.filter(e => e.name.toLowerCase() === employeeName.toLowerCase())
+      : allEmployees.filter(e => {
+          const r = Array.isArray(e.role) ? e.role : [e.role || 'EMPLOYEE'];
+          return !r.includes('ADMIN_VIEW');
         });
-      }
-    }
 
-    filteredRecords.forEach((log: any) => {
+    const existingLogsMap = new Map<string, any>();
+    records.forEach((log: any) => {
       if (log.date) {
-        allDaysMap.set(log.date, log);
+        existingLogsMap.set(`${log.employeeIdReference}_${log.date}`, log);
       }
     });
+
+    const allDaysMap = new Map<string, any>();
+
+    for (const emp of targetEmployeesList) {
+      let absentCounter = 0;
+      const clLimit = emp.monthlyCasualLeaveLimit !== undefined ? Number(emp.monthlyCasualLeaveLimit) : 0;
+
+      for (let day = 1; day <= totalDaysInMonth; day++) {
+        const dateObj = new Date(targetYearNum, targetMonthIndex, day);
+        if (dateObj > today) break; // 🌟 Strictly stop at today so future dates never show up in advance
+
+        const formattedDateStr = dateObj.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+        const dayOfWeekStr = dateObj.toLocaleDateString('en-US', { weekday: 'long' });
+        const cleanDateStr = formattedDateStr.replace(',', '').replace(/\s+/g, ' ').toLowerCase().trim();
+        const holidayTitle = holidaysMap.get(cleanDateStr);
+        const uniqueKey = `${emp.employeeId}_${formattedDateStr}`;
+
+        if (existingLogsMap.has(uniqueKey)) {
+          allDaysMap.set(uniqueKey, existingLogsMap.get(uniqueKey));
+        } else if (dateObj.getDay() === 0) {
+          allDaysMap.set(uniqueKey, {
+            employeeName: emp.name,
+            employeeIdReference: emp.employeeId,
+            date: formattedDateStr,
+            dayOfWeek: dayOfWeekStr,
+            loginTime: 'OFF',
+            logoutTime: 'OFF',
+            locationInAddress: 'Non-Working Day',
+            locationOutAddress: 'Non-Working Day',
+            isSundayPlaceholder: true
+          });
+        } else if (holidayTitle) {
+          allDaysMap.set(uniqueKey, {
+            employeeName: emp.name,
+            employeeIdReference: emp.employeeId,
+            date: formattedDateStr,
+            dayOfWeek: dayOfWeekStr,
+            loginTime: 'HOLIDAY',
+            logoutTime: 'HOLIDAY',
+            locationInAddress: holidayTitle,
+            locationOutAddress: holidayTitle,
+            isHolidayPlaceholder: true,
+            holidayTitle: holidayTitle
+          });
+        } else {
+          absentCounter++;
+          const isCl = absentCounter <= clLimit;
+          allDaysMap.set(uniqueKey, {
+            employeeName: emp.name,
+            employeeIdReference: emp.employeeId,
+            date: formattedDateStr,
+            dayOfWeek: dayOfWeekStr,
+            loginTime: isCl ? 'CASUAL LEAVE' : 'ABSENT',
+            logoutTime: isCl ? 'CASUAL LEAVE' : 'ABSENT',
+            locationInAddress: isCl ? 'Casual Leave' : 'Unexcused Absence',
+            locationOutAddress: isCl ? 'Casual Leave' : 'Unexcused Absence',
+            isCasualLeave: isCl
+          });
+        }
+      }
+    }
 
     const combinedRecords = Array.from(allDaysMap.values());
     combinedRecords.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
     let presentCount = 0;
     let absentCount = 0;
+    let clCount = 0;
+    let holidayCount = 0;
     let sundayCount = 0;
 
     combinedRecords.forEach((log: any) => {
       const isSun = log.isSundayPlaceholder || log.dayOfWeek?.toLowerCase() === 'sunday' || new Date(log.date).getDay() === 0;
       if (isSun) {
         sundayCount++;
+      } else if (log.isHolidayPlaceholder || log.loginTime === 'HOLIDAY') {
+        holidayCount++;
+      } else if (log.isCasualLeave || log.loginTime === 'CASUAL LEAVE') {
+        clCount++;
       } else if (log.loginTime === 'ABSENT' || log.logoutTime === 'ABSENT') {
         absentCount++;
       } else if (log.loginTime && log.loginTime !== '--:--') {
@@ -319,6 +414,8 @@ export const downloadAttendance = async (req: Request, res: Response): Promise<a
     csvData += `Employee Filter,${employeeName}\n`;
     csvData += `Total Days Present,${presentCount}\n`;
     csvData += `Total Days Absent,${absentCount}\n`;
+    csvData += `Total Casual Leaves (CL),${clCount}\n`;
+    csvData += `Total Company Holidays,${holidayCount}\n`;
     csvData += `Total Sundays / Weekend Offs,${sundayCount}\n\n`;
     csvData += "Employee Name,Employee ID,Date,Day of Week,Login Time,Logout Time,Punch In Location,Punch Out Location,Hours Worked\n";
 
@@ -339,8 +436,6 @@ export const downloadAttendance = async (req: Request, res: Response): Promise<a
     return res.status(500).json({ success: false, message: "Spreadsheet compilation failure.", error: err });
   }
 };
-
-// --- DYNAMIC OFFICE LOCATION MANAGEMENT CONTROLLERS ---
 
 export const getOfficeLocations = async (_req: Request, res: Response) => {
   try {
@@ -411,5 +506,90 @@ export const deleteOfficeLocation = async (req: Request, res: Response): Promise
     return res.status(200).json({ success: true, message: 'Office location deleted successfully.' });
   } catch (err: any) {
     return res.status(500).json({ success: false, message: 'Failed to delete location.', error: err.message });
+  }
+};
+
+export const getHolidays = async (_req: Request, res: Response) => {
+  try {
+    const holidays = await Holiday.find().sort({ createdAt: -1 });
+    return res.status(200).json(holidays);
+  } catch (err: any) {
+    return res.status(500).json({ success: false, message: 'Failed to fetch holidays.', error: err.message });
+  }
+};
+
+export const addHoliday = async (req: Request, res: Response): Promise<any> => {
+  const { title, date, description } = req.body;
+
+  if (!title || !date) {
+    return res.status(400).json({ success: false, message: 'Holiday title and date are required.' });
+  }
+
+  try {
+    const newHoliday = new Holiday({
+      title: title.trim(),
+      date: date.trim(),
+      description: description ? description.trim() : ''
+    });
+
+    await newHoliday.save();
+    return res.status(201).json({ success: true, message: 'Holiday added successfully!', holiday: newHoliday });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, message: 'Failed to add holiday (Date might already exist).', error: err.message });
+  }
+};
+
+export const deleteHoliday = async (req: Request, res: Response): Promise<any> => {
+  const targetId = req.params.id;
+
+  try {
+    const deletedHoliday = await Holiday.findByIdAndDelete(targetId);
+    if (!deletedHoliday) {
+      return res.status(404).json({ success: false, message: 'Holiday record not found.' });
+    }
+    return res.status(200).json({ success: true, message: 'Holiday removed successfully.' });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, message: 'Failed to delete holiday.', error: err.message });
+  }
+};
+
+export const bulkAddHolidays = async (req: Request, res: Response): Promise<any> => {
+  const { holidays } = req.body;
+
+  if (!Array.isArray(holidays) || holidays.length === 0) {
+    return res.status(400).json({ success: false, message: 'Invalid or empty holiday payload.' });
+  }
+
+  try {
+    let insertedCount = 0;
+    let skippedCount = 0;
+
+    for (const item of holidays) {
+      if (!item.title || !item.date) {
+        skippedCount++;
+        continue;
+      }
+
+      const cleanDate = String(item.date).trim();
+      const existing = await Holiday.findOne({ date: cleanDate });
+
+      if (!existing) {
+        await Holiday.create({
+          title: String(item.title).trim(),
+          date: cleanDate,
+          description: item.description ? String(item.description).trim() : ''
+        });
+        insertedCount++;
+      } else {
+        skippedCount++;
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Successfully imported ${insertedCount} holidays. Skipped ${skippedCount} duplicates/invalid rows.`
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, message: 'Failed to process bulk holidays.', error: err.message });
   }
 };

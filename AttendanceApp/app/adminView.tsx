@@ -26,6 +26,9 @@ interface AttendanceRecord {
   locationInAddress?: string;
   locationOutAddress?: string;
   isSundayPlaceholder?: boolean;
+  isHolidayPlaceholder?: boolean;
+  isCasualLeave?: boolean;
+  holidayTitle?: string;
 }
 
 interface PhotoModalState {
@@ -41,14 +44,16 @@ export default function AdminViewScreen() {
   const { logout, currentUser } = useAuth();
 
   const [selectedEmpFilter, setSelectedEmpFilter] = useState<string>('ALL');
-  const [searchQuery, setSearchQuery] = useState<string>(''); // 🔍 SEARCH STATE
+  const [searchQuery, setSearchQuery] = useState<string>(''); 
   
   const currentMonthName = new Date().toLocaleDateString('en-US', { month: 'long' }); 
   const [selectedMonthFilter, setSelectedMonthFilter] = useState<string>(currentMonthName);
   
   const [employees, setEmployees] = useState<EmployeeProfile[]>([]);
   const [attendanceLogs, setAttendanceLogs] = useState<AttendanceRecord[]>([]);
-  const [allAttendanceLogs, setAllAttendanceLogs] = useState<AttendanceRecord[]>([]); // 🌟 Global logs storage
+  const [allAttendanceLogs, setAllAttendanceLogs] = useState<AttendanceRecord[]>([]); 
+  const [holidaysCount, setHolidaysCount] = useState<number>(0);
+  const [casualLeaveCount, setCasualLeaveCount] = useState<number>(0);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null); 
 
@@ -71,7 +76,6 @@ export default function AdminViewScreen() {
     July: 6, August: 7, September: 8, October: 9, November: 10, December: 11
   };
 
-  // 📅 HELPER: Auto-count elapsed Sundays for the selected month up to today
   const getSundaysCountForCurrentMonth = () => {
     const now = new Date();
     const currentYear = now.getFullYear();
@@ -90,9 +94,56 @@ export default function AdminViewScreen() {
 
   const sundayCount = getSundaysCountForCurrentMonth();
 
-  // ⏱️ ACCURATE WORKING HOURS CALCULATOR WITH LUNCH DEDUCTION MATCHING HISTORY PAGE
+  const fetchHolidaysCountForCurrentMonth = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/admin/holidays`);
+      if (response.ok) {
+        const data = await response.json();
+        const now = new Date();
+        const currentYear = now.getFullYear();
+        const targetMonthIndex = monthNameToIndex[selectedMonthFilter] ?? now.getMonth();
+        const todayDateNum = (targetMonthIndex === now.getMonth()) ? now.getDate() : new Date(currentYear, targetMonthIndex + 1, 0).getDate();
+
+        let count = 0;
+        data.forEach((h: any) => {
+          if (h.date) {
+            const cleanStr = String(h.date).replace(',', '').trim();
+            const parts = cleanStr.split(/\s+/);
+            
+            let hDate: Date | null = null;
+            if (parts.length >= 3 && monthNameToIndex[parts[0]] !== undefined) {
+              const mIndex = monthNameToIndex[parts[0]];
+              const dayNum = parseInt(parts[1], 10);
+              const yearNum = parseInt(parts[2], 10);
+              if (!isNaN(dayNum) && !isNaN(yearNum)) {
+                hDate = new Date(yearNum, mIndex, dayNum);
+              }
+            }
+
+            if (!hDate || isNaN(hDate.getTime())) {
+              hDate = new Date(h.date);
+            }
+
+            if (
+              hDate &&
+              !isNaN(hDate.getTime()) &&
+              hDate.getFullYear() === currentYear &&
+              hDate.getMonth() === targetMonthIndex &&
+              (targetMonthIndex !== now.getMonth() || hDate.getDate() <= todayDateNum)
+            ) {
+              count++;
+            }
+          }
+        });
+        setHolidaysCount(count);
+      }
+    } catch (e) {
+      console.error('Error fetching holidays count:', e);
+    }
+  };
+
   const calculateWorkingHours = (inTime: string, outTime: string, employeeNameTarget?: string, employeeIdTarget?: string) => {
-    if (!inTime || !outTime || inTime === '--:--' || outTime === '--:--' || inTime === 'ABSENT' || outTime === 'ABSENT' || inTime === 'OFF') {
+    if (!inTime || !outTime || inTime === '--:--' || outTime === '--:--' || inTime === 'ABSENT' || outTime === 'ABSENT' || inTime === 'OFF' || inTime === 'HOLIDAY' || inTime === 'CASUAL LEAVE') {
       return '--';
     }
     try {
@@ -136,7 +187,6 @@ export default function AdminViewScreen() {
     }
   };
 
-  // 🔍 FILTERED EMPLOYEES FOR CAROUSEL (EXCLUDES ADMIN_VIEW ROLES)
   const filteredEmployees = employees.filter((emp) => {
     const roles = Array.isArray(emp.role) ? emp.role : [emp.role || 'EMPLOYEE'];
     if (roles.includes('ADMIN_VIEW')) return false;
@@ -149,7 +199,6 @@ export default function AdminViewScreen() {
     );
   });
 
-  // 🎯 PRECISION DATE PARSER FOR TIMELINE SORTING
   const parseDateToTimestamp = (dateStr: string): number => {
     if (!dateStr) return 0;
     const cleanStr = dateStr.replace(',', '').trim();
@@ -170,7 +219,6 @@ export default function AdminViewScreen() {
     return isNaN(fallback) ? 0 : fallback;
   };
 
-  // 🏖️ GENERATE SUNDAYS & INTERLEAVE STRICTLY INTO PROPER CALENDAR ORDER (SCOPED PER EMPLOYEE)
   const getCombinedLogsWithSundays = () => {
     const currentYear = new Date().getFullYear();
     const targetMonthIndex = monthNameToIndex[selectedMonthFilter] ?? new Date().getMonth();
@@ -186,11 +234,10 @@ export default function AdminViewScreen() {
         })
       : employees.filter(e => e.name === selectedEmpFilter);
 
-    // 1. Generate Sundays for each employee up to today
     targetEmployees.forEach(emp => {
       for (let day = 1; day <= totalDays; day++) {
         const dateObj = new Date(currentYear, targetMonthIndex, day);
-        if (dateObj > today && targetMonthIndex === today.getMonth()) break; 
+        if (dateObj > today) break; 
 
         const formattedDateStr = dateObj.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
         const formattedDayName = dateObj.toLocaleDateString('en-US', { weekday: 'long' });
@@ -212,7 +259,6 @@ export default function AdminViewScreen() {
       }
     });
 
-    // 2. Overlay actual cloud attendance logs using unique employee + date key
     attendanceLogs.forEach((log) => {
       if (log.date) {
         const timestamp = parseDateToTimestamp(log.date);
@@ -228,7 +274,6 @@ export default function AdminViewScreen() {
       }
     });
 
-    // 3. Convert map to array and sort strictly descending by precise timestamp
     const combined = Array.from(allDaysMap.values());
     combined.sort((a, b) => {
       const timeA = parseDateToTimestamp(a.date);
@@ -261,26 +306,28 @@ export default function AdminViewScreen() {
 
   const filteredLogs = getFilteredLogs();
 
-  // 📊 CALCULATE MONTHLY METRICS ACCURATELY
   const getAttendanceMetrics = () => {
     let presentCount = 0;
     let absentCount = 0;
+    let clCount = 0;
 
     filteredLogs.forEach((log) => {
       const isSun = log.isSundayPlaceholder || log.dayOfWeek?.toLowerCase() === 'sunday' || new Date(log.date).getDay() === 0;
       if (!isSun) {
         if (log.loginTime === 'ABSENT' || log.logoutTime === 'ABSENT') {
           absentCount++;
-        } else if (log.loginTime && log.loginTime !== '--:--' && log.loginTime !== 'OFF') {
+        } else if (log.loginTime === 'CASUAL LEAVE' || log.isCasualLeave) {
+          clCount++;
+        } else if (log.loginTime && log.loginTime !== '--:--' && log.loginTime !== 'OFF' && log.loginTime !== 'HOLIDAY') {
           presentCount++;
         }
       }
     });
 
-    return { presentCount, absentCount };
+    return { presentCount, absentCount, clCount };
   };
 
-  const { presentCount, absentCount } = getAttendanceMetrics();
+  const { presentCount, absentCount, clCount } = getAttendanceMetrics();
 
   const fetchEmployeesList = async () => {
     try {
@@ -294,7 +341,6 @@ export default function AdminViewScreen() {
     }
   };
 
-  // 🌐 FETCH ALL LOGS ONCE FOR GLOBAL METRICS
   const fetchGlobalAttendanceLogs = async () => {
     try {
       const response = await fetch(`${API_BASE_URL}/admin/attendance-sheet?employeeName=ALL`);
@@ -328,7 +374,8 @@ export default function AdminViewScreen() {
   useEffect(() => {
     fetchEmployeesList();
     fetchGlobalAttendanceLogs();
-  }, []);
+    fetchHolidaysCountForCurrentMonth();
+  }, [selectedMonthFilter]);
 
   useEffect(() => {
     fetchAttendanceLogs(selectedEmpFilter);
@@ -367,7 +414,6 @@ export default function AdminViewScreen() {
   return (
     <View style={styles.container}>
       
-      {/* SUPERVISOR DASHBOARD BANNER */}
       <View style={styles.headerHeroCard}>
         <View style={styles.headerBrandBlock}>
           <View style={styles.logoBadgeFrame}>
@@ -388,7 +434,6 @@ export default function AdminViewScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* METRICS OVERVIEW CARDS */}
       <Text style={styles.sectionHeadingLabel}>
         {selectedEmpFilter === 'ALL' 
           ? `🌐 All Employees Analytics (${selectedMonthFilter} ${new Date().getFullYear()})` 
@@ -426,21 +471,23 @@ export default function AdminViewScreen() {
         </View>
       </View>
 
-      {/* 🏖️ DEDICATED SUNDAYS / OFF DAYS METRIC CARD (Light Yellow Styling) */}
-      <View style={styles.sundayCardBox}>
-        <View style={styles.sundayCardLeft}>
-          <View style={styles.sundayIconCircle}>
-            <Ionicons name="sunny-outline" size={18} color="#D69E2E" />
-          </View>
-          <View>
-            <Text style={styles.sundayCardTitle}>Sundays / Weekend Offs Elapsed</Text>
-            <Text style={styles.sundayCardSubtitle}>Non-working weekend days</Text>
-          </View>
+      <View style={styles.secondaryGridContainer}>
+        <View style={[styles.statBoxSummarySecondary, { borderLeftColor: '#D69E2E', backgroundColor: '#FEFCBF' }]}>
+          <Text style={[styles.statBoxNumber, { color: '#744210' }]}>{sundayCount}</Text>
+          <Text style={[styles.statBoxLabel, { color: '#975A16' }]}>Sundays Off</Text>
         </View>
-        <Text style={styles.sundayCardValue}>{sundayCount}</Text>
+
+        <View style={[styles.statBoxSummarySecondary, { borderLeftColor: '#16A34A', backgroundColor: '#F0FDF4' }]}>
+          <Text style={[styles.statBoxNumber, { color: '#166534' }]}>{clCount}</Text>
+          <Text style={[styles.statBoxLabel, { color: '#15803D' }]}>Casual Leave (CL)</Text>
+        </View>
+
+        <View style={[styles.statBoxSummarySecondary, { borderLeftColor: '#DD6B20', backgroundColor: '#FFFAF0' }]}>
+          <Text style={[styles.statBoxNumber, { color: '#9C4221' }]}>{holidaysCount}</Text>
+          <Text style={[styles.statBoxLabel, { color: '#C05621' }]}>Company Holidays</Text>
+        </View>
       </View>
 
-      {/* 🔍 SEARCH BAR INPUT */}
       <View style={styles.searchBarContainer}>
         <Ionicons name="search" size={18} color="#718096" style={{ marginRight: 8 }} />
         <TextInput
@@ -457,7 +504,6 @@ export default function AdminViewScreen() {
         )}
       </View>
 
-      {/* FILTER CAROUSEL */}
       <Text style={styles.sectionHeadingLabel}>Workforce Filter Focal Point</Text>
       <View style={styles.pillScrollFrame}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -481,7 +527,6 @@ export default function AdminViewScreen() {
         </ScrollView>
       </View>
 
-      {/* CALENDAR MONTH SELECTION STRIP */}
       <Text style={styles.sectionHeadingLabel}>Select Active Tracking Month ({new Date().getFullYear()})</Text>
       <View style={[styles.pillScrollFrame, { marginBottom: 14 }]}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -499,7 +544,6 @@ export default function AdminViewScreen() {
         </ScrollView>
       </View>
 
-      {/* CHRONOLOGICAL LOG FEED */}
       <Text style={styles.sectionHeadingLabel}>{selectedMonthFilter} Verification Stream</Text>
       
       {isLoading ? (
@@ -521,6 +565,8 @@ export default function AdminViewScreen() {
             const hasOutPhoto = !!logItem.capturedPhotoOutUri;
             const isAbsent = logItem.loginTime === 'ABSENT' || logItem.logoutTime === 'ABSENT';
             const isSunday = logItem.isSundayPlaceholder || logItem.dayOfWeek?.toLowerCase() === 'sunday' || new Date(logItem.date).getDay() === 0;
+            const isHoliday = logItem.isHolidayPlaceholder || logItem.loginTime === 'HOLIDAY';
+            const isCL = logItem.isCasualLeave || logItem.loginTime === 'CASUAL LEAVE';
 
             return (
               <View key={logItem._id} style={styles.dayGroupCardWrapper}>
@@ -531,21 +577,31 @@ export default function AdminViewScreen() {
                     styles.dataLogCard, 
                     isExpanded && styles.dataLogCardExpanded,
                     isAbsent && styles.dataLogCardAbsent,
-                    isSunday && { backgroundColor: '#F7FAFC', borderColor: '#CBD5E0' }
+                    isSunday && { backgroundColor: '#F7FAFC', borderColor: '#CBD5E0' },
+                    isHoliday && { backgroundColor: '#FFFAF0', borderColor: '#FBD38D' },
+                    isCL && { backgroundColor: '#F0FDF4', borderColor: '#BBF7D0' }
                   ]}
-                  onPress={() => !isAbsent && !isSunday && handleToggleLogDrawer(logItem._id)}
+                  onPress={() => !isAbsent && !isSunday && !isHoliday && !isCL && handleToggleLogDrawer(logItem._id)}
                 >
                   <View style={styles.logCardHeader}>
                     <View>
-                      <Text style={[styles.logEmployeeIdentity, isSunday && { color: '#4A5568' }]}>{logItem.employeeName}</Text>
+                      <Text style={[styles.logEmployeeIdentity, isSunday && { color: '#4A5568' }, isHoliday && { color: '#DD6B20' }, isCL && { color: '#16A34A' }]}>{logItem.employeeName}</Text>
                       <Text style={styles.logEmployeeIdSub}>ID reference: {logItem.employeeIdReference}</Text>
                     </View>
                     
                     <View style={{ alignItems: 'flex-end' }}>
-                      <View style={[styles.dateBadge, isAbsent && { backgroundColor: '#FED7D7', borderColor: '#FEB2B2' }, isSunday && { backgroundColor: '#EDF2F7', borderColor: '#CBD5E0' }]}>
-                        <Text style={[styles.dateBadgeText, isAbsent && { color: '#9B2C2C' }, isSunday && { color: '#4A5568' }]}>{logItem.date}</Text>
+                      <View style={[styles.dateBadge, isAbsent && { backgroundColor: '#FED7D7', borderColor: '#FEB2B2' }, isSunday && { backgroundColor: '#EDF2F7', borderColor: '#CBD5E0' }, isHoliday && { backgroundColor: '#FFFAF0', borderColor: '#FBD38D' }, isCL && { backgroundColor: '#F0FDF4', borderColor: '#BBF7D0' }]}>
+                        <Text style={[styles.dateBadgeText, isAbsent && { color: '#9B2C2C' }, isSunday && { color: '#4A5568' }, isHoliday && { color: '#DD6B20' }, isCL && { color: '#16A34A' }]}>{logItem.date}</Text>
                       </View>
-                      {isSunday ? (
+                      {isHoliday ? (
+                        <View style={[styles.dateBadge, { backgroundColor: '#FFFAF0', borderColor: '#FBD38D', marginTop: 4, paddingVertical: 2 }]}>
+                          <Text style={{ fontSize: 9, fontWeight: '700', color: '#DD6B20' }}>🎉 Holiday</Text>
+                        </View>
+                      ) : isCL ? (
+                        <View style={[styles.dateBadge, { backgroundColor: '#F0FDF4', borderColor: '#BBF7D0', marginTop: 4, paddingVertical: 2 }]}>
+                          <Text style={{ fontSize: 9, fontWeight: '700', color: '#16A34A' }}>🌿 Casual Leave</Text>
+                        </View>
+                      ) : isSunday ? (
                         <View style={[styles.dateBadge, { backgroundColor: '#EDF2F7', borderColor: '#CBD5E0', marginTop: 4, paddingVertical: 2 }]}>
                           <Text style={{ fontSize: 9, fontWeight: '700', color: '#4A5568' }}>🏖️ Weekend Off</Text>
                         </View>
@@ -557,7 +613,17 @@ export default function AdminViewScreen() {
                     </View>
                   </View>
                   
-                  {isSunday ? (
+                  {isHoliday ? (
+                    <View style={[styles.metricBox, { backgroundColor: '#FFFAF0', borderColor: '#FBD38D', width: '100%', alignItems: 'center', paddingVertical: 10 }]}>
+                      <Text style={[styles.metricLabel, { color: '#DD6B20' }]}>STATUS</Text>
+                      <Text style={[styles.metricTime, { color: '#7B341E' }]}>{logItem.holidayTitle || 'Company Holiday'}</Text>
+                    </View>
+                  ) : isCL ? (
+                    <View style={[styles.metricBox, { backgroundColor: '#F0FDF4', borderColor: '#BBF7D0', width: '100%', alignItems: 'center', paddingVertical: 10 }]}>
+                      <Text style={[styles.metricLabel, { color: '#16A34A' }]}>STATUS</Text>
+                      <Text style={[styles.metricTime, { color: '#15803D' }]}>Casual Leave (CL)</Text>
+                    </View>
+                  ) : isSunday ? (
                     <View style={[styles.metricBox, { backgroundColor: '#EDF2F7', borderColor: '#CBD5E0', width: '100%', alignItems: 'center', paddingVertical: 10 }]}>
                       <Text style={[styles.metricLabel, { color: '#4A5568' }]}>STATUS</Text>
                       <Text style={[styles.metricTime, { color: '#2D3748' }]}>Sunday - Non-Working Day</Text>
@@ -586,18 +652,16 @@ export default function AdminViewScreen() {
                     </View>
                   )}
 
-                  {(hasInPhoto || hasOutPhoto) && !isExpanded && !isAbsent && !isSunday && (
+                  {(hasInPhoto || hasOutPhoto) && !isExpanded && !isAbsent && !isSunday && !isHoliday && !isCL && (
                     <Text style={styles.expandTipText}>Tap card to inspect compliance captures ▼</Text>
                   )}
                 </TouchableOpacity>
 
-                {/* EXPANDABLE DUAL PHOTO DRAWER WITH GEOTAG OVERLAY STAMP */}
-                {isExpanded && !isAbsent && !isSunday && (
+                {isExpanded && !isAbsent && !isSunday && !isHoliday && !isCL && (
                   <View style={styles.photoDrawerContainer}>
                     <Text style={styles.drawerLabelTitle}>Biometric Verification Snapshots:</Text>
                     <View style={styles.photoGridRow}>
                       
-                      {/* 📥 PUNCH IN THUMBNAIL */}
                       <View style={styles.photoBlock}>
                         <Text style={styles.photoGridLabel}>📥 Punch In Capture:</Text>
                         {hasInPhoto ? (
@@ -621,7 +685,6 @@ export default function AdminViewScreen() {
                         )}
                       </View>
 
-                      {/* 📤 PUNCH OUT THUMBNAIL */}
                       <View style={styles.photoBlock}>
                         <Text style={styles.photoGridLabel}>📤 Punch Out Capture:</Text>
                         {hasOutPhoto ? (
@@ -655,7 +718,6 @@ export default function AdminViewScreen() {
         </ScrollView>
       )}
 
-      {/* POPUP MODAL EXCLUSIVELY RENDERS EXACT CAPTURED GEOLOCATION */}
       <Modal
         visible={modalState.visible}
         transparent={true}
@@ -710,20 +772,13 @@ const styles = StyleSheet.create({
   exitBadgeBtn: { backgroundColor: '#E53E3E', paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10, flexDirection: 'row', alignItems: 'center', flexShrink: 0 },
   exitBtnText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' },
   sectionHeadingLabel: { fontSize: 11, fontWeight: '800', color: '#2B6CB0', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 8, marginTop: 4, paddingLeft: 2 },
-  summaryGridContainer: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginBottom: 12 },
+  summaryGridContainer: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginBottom: 10 },
+  secondaryGridContainer: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginBottom: 12 },
   statBoxSummary: { width: '31.5%', borderRadius: 16, padding: 12, borderWidth: 1, backgroundColor: '#FFFFFF', borderColor: '#E2E8F0', borderLeftWidth: 4 },
+  statBoxSummarySecondary: { width: '31.5%', borderRadius: 16, padding: 12, borderWidth: 1, borderColor: '#E2E8F0', borderLeftWidth: 4 },
   statBoxNumber: { fontSize: 19, fontWeight: '800', color: '#1A202C' },
   statBoxLabel: { fontSize: 9, fontWeight: '700', color: '#718096', marginTop: 3 },
-  
-  /* 🏖️ LIGHT YELLOW SUNDAY CARD STYLES MATCHING HOME PAGE */
-  sundayCardBox: { backgroundColor: '#FEFCBF', borderWidth: 1, borderColor: '#FAF089', borderLeftWidth: 4, borderLeftColor: '#D69E2E', padding: 12, borderRadius: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.01, shadowRadius: 4, elevation: 1 },
-  sundayCardLeft: { flexDirection: 'row', alignItems: 'center', flex: 1 },
-  sundayIconCircle: { width: 32, height: 32, borderRadius: 10, backgroundColor: '#FFFFF0', justifyContent: 'center', alignItems: 'center', marginRight: 12, borderWidth: 1, borderColor: '#FEEBC8' },
-  sundayCardTitle: { fontSize: 12, fontWeight: '800', color: '#744210' },
-  sundayCardSubtitle: { fontSize: 10, fontWeight: '600', color: '#975A16', marginTop: 1 },
-  sundayCardValue: { fontSize: 16, fontWeight: '800', color: '#744210' },
 
-  /* 🔍 SEARCH BAR STYLES */
   searchBarContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', borderRadius: 14, paddingHorizontal: 12, height: 42, borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 10 },
   searchInput: { flex: 1, fontSize: 13, color: '#1A202C', fontWeight: '600' },
 
@@ -770,7 +825,6 @@ const styles = StyleSheet.create({
   emptyCardFrame: { backgroundColor: '#FFFFFF', padding: 30, borderRadius: 20, alignItems: 'center', borderWidth: 1, borderColor: '#E2E8F0' },
   emptyTextMessage: { color: '#A0AEC0', fontSize: 13, fontStyle: 'italic', fontWeight: '600', textAlign: 'center' },
 
-  /* POPUP MODAL & GEOTAG OVERLAY STYLES */
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', alignItems: 'center', padding: 16 },
   modalCardContainer: { width: '100%', maxWidth: 360, alignItems: 'center', position: 'relative' },
   modalCloseButton: { position: 'absolute', top: -45, right: 0, zIndex: 10 },

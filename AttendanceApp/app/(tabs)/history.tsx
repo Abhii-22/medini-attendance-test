@@ -17,6 +17,9 @@ interface BackendLog {
   locationInAddress?: string;
   locationOutAddress?: string;
   isSundayPlaceholder?: boolean;
+  isHolidayPlaceholder?: boolean;
+  isCasualLeave?: boolean;
+  holidayTitle?: string;
 }
 
 interface PhotoModalState {
@@ -32,6 +35,7 @@ export default function HistoryScreen() {
   const { currentUser } = useAuth();
   const insets = useSafeAreaInsets();
   const [cloudLogs, setCloudLogs] = useState<BackendLog[]>([]);
+  const [holidaysMap, setHolidaysMap] = useState<{ [key: string]: string }>({});
   const [employeeLunchMins, setEmployeeLunchMins] = useState<number>(0);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
@@ -64,7 +68,7 @@ export default function HistoryScreen() {
   });
 
   const calculateWorkingHours = (inTime: string, outTime: string, lunchBreakMinutes: number = 0) => {
-    if (!inTime || !outTime || inTime === '--:--' || outTime === '--:--' || inTime === 'ABSENT' || outTime === 'ABSENT') {
+    if (!inTime || !outTime || inTime === '--:--' || outTime === '--:--' || inTime === 'ABSENT' || outTime === 'ABSENT' || inTime === 'CASUAL LEAVE') {
       return '--';
     }
     try {
@@ -126,6 +130,25 @@ export default function HistoryScreen() {
     }
   };
 
+  const fetchHolidaysData = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/holidays`);
+      if (res.ok) {
+        const data = await res.json();
+        const map: { [key: string]: string } = {};
+        data.forEach((h: any) => {
+          if (h.date) {
+            const cleanDate = h.date.replace(',', '').replace(/\s+/g, ' ').toLowerCase().trim();
+            map[cleanDate] = h.title;
+          }
+        });
+        setHolidaysMap(map);
+      }
+    } catch (e) {
+      console.error('Error fetching holidays:', e);
+    }
+  };
+
   const fetchPermanentCloudHistory = async () => {
     if (!currentUser?.name) return;
     
@@ -146,6 +169,7 @@ export default function HistoryScreen() {
   useEffect(() => {
     fetchEmployeeLunchProfile();
     fetchPermanentCloudHistory();
+    fetchHolidaysData();
   }, [currentUser]);
 
   const year = calendarViewDate.getFullYear();
@@ -174,11 +198,8 @@ export default function HistoryScreen() {
     setIsCalendarVisible(false);
   };
 
-  // 🎯 PRECISION DATE PARSER TO GUARANTEE EXACT CALENDAR TIMELINE SORTING
   const parseDateToTimestamp = (dateStr: string): number => {
     if (!dateStr) return 0;
-    
-    // Example format: "September 23, 2026"
     const cleanStr = dateStr.replace(',', '').trim();
     const parts = cleanStr.split(/\s+/);
     
@@ -193,13 +214,11 @@ export default function HistoryScreen() {
       }
     }
 
-    // Fallback parser
     const fallback = new Date(dateStr).getTime();
     return isNaN(fallback) ? 0 : fallback;
   };
 
-  // 🏖️ GENERATE SUNDAYS & INTERLEAVE EXACTLY INTO PROPER CALENDAR ORDER
-  const getCombinedLogsWithSundays = () => {
+  const getCombinedLogsWithSundaysAndHolidays = () => {
     const currentYear = new Date().getFullYear();
     const targetMonthIndex = monthNameToIndex[selectedMonthFilter] ?? new Date().getMonth();
     
@@ -208,16 +227,30 @@ export default function HistoryScreen() {
 
     const allDaysMap = new Map<string, BackendLog>();
 
-    // 1. Generate Sundays for the selected month up to today
     for (let day = 1; day <= totalDays; day++) {
       const dateObj = new Date(currentYear, targetMonthIndex, day);
-      if (dateObj > today && targetMonthIndex === today.getMonth()) break; 
+      if (dateObj > today) break; 
 
       const formattedDateStr = dateObj.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
       const formattedDayName = dateObj.toLocaleDateString('en-US', { weekday: 'long' });
       const isSunday = dateObj.getDay() === 0;
 
-      if (isSunday) {
+      const cleanFormattedDateStr = formattedDateStr.replace(',', '').replace(/\s+/g, ' ').toLowerCase().trim();
+      const holidayTitle = holidaysMap[cleanFormattedDateStr];
+
+      if (holidayTitle) {
+        allDaysMap.set(formattedDateStr, {
+          _id: `holiday-${formattedDateStr}`,
+          employeeIdReference: currentUser?.employeeId || 'N/A',
+          employeeName: currentUser?.name || 'Employee',
+          date: formattedDateStr,
+          dayOfWeek: formattedDayName,
+          loginTime: 'HOLIDAY',
+          logoutTime: 'HOLIDAY',
+          isHolidayPlaceholder: true,
+          holidayTitle: holidayTitle
+        });
+      } else if (isSunday) {
         allDaysMap.set(formattedDateStr, {
           _id: `sunday-${formattedDateStr}`,
           employeeIdReference: currentUser?.employeeId || 'N/A',
@@ -231,7 +264,6 @@ export default function HistoryScreen() {
       }
     }
 
-    // 2. Overlay actual cloud attendance logs (Weekdays / check-ins take priority)
     cloudLogs.forEach(log => {
       if (log.date) {
         const timestamp = parseDateToTimestamp(log.date);
@@ -244,7 +276,6 @@ export default function HistoryScreen() {
       }
     });
 
-    // 3. Convert map to array and sort strictly descending by precise timestamp (Latest at top, descending down to the 1st)
     const combined = Array.from(allDaysMap.values());
     combined.sort((a, b) => {
       const timeA = parseDateToTimestamp(a.date);
@@ -255,9 +286,53 @@ export default function HistoryScreen() {
     return combined;
   };
 
-  const allLogsWithSundays = getCombinedLogsWithSundays();
+  const allLogsWithExtras = getCombinedLogsWithSundaysAndHolidays();
 
-  const filteredLogs = allLogsWithSundays.filter((item) => {
+  // Helper map for calendar cell color coding lookup
+  const getDayStatusStyle = (cellDateObj: Date) => {
+    const formattedDateStr = cellDateObj.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+    const cleanDateStr = formattedDateStr.replace(',', '').replace(/\s+/g, ' ').toLowerCase().trim();
+    
+    // Check if future date
+    if (cellDateObj > new Date()) {
+      return { bg: '#F1F5F9', text: '#94A3B8' }; // Future/Disabled
+    }
+
+    // Check holiday
+    if (holidaysMap[cleanDateStr]) {
+      return { bg: '#FEF3C7', text: '#D97706', border: '#F59E0B' }; // Holiday (Yellow/Orange)
+    }
+
+    // Check Sunday
+    if (cellDateObj.getDay() === 0) {
+      return { bg: '#FEF08A', text: '#CA8A04', border: '#EAB308' }; // Sunday (Light Gold)
+    }
+
+    // Find log for this day
+    const matchedLog = allLogsWithExtras.find(l => {
+      const t = parseDateToTimestamp(l.date);
+      if (t > 0) {
+        return new Date(t).toDateString() === cellDateObj.toDateString();
+      }
+      return l.date === formattedDateStr;
+    });
+
+    if (matchedLog) {
+      if (matchedLog.loginTime === 'ABSENT' || matchedLog.logoutTime === 'ABSENT') {
+        return { bg: '#FEE2E2', text: '#DC2626', border: '#EF4444' }; // Absent (Red)
+      }
+      if (matchedLog.loginTime === 'CASUAL LEAVE' || matchedLog.isCasualLeave) {
+        return { bg: '#DCFCE7', text: '#16A34A', border: '#22C55E' }; // Casual Leave (Green)
+      }
+      if (matchedLog.loginTime && matchedLog.loginTime !== '--:--' && matchedLog.loginTime !== 'OFF') {
+        return { bg: '#DBEAFE', text: '#2563EB', border: '#3B82F6' }; // Present (Blue)
+      }
+    }
+
+    return { bg: '#F8FAFC', text: '#64748B' }; // Default / Unrecorded
+  };
+
+  const filteredLogs = allLogsWithExtras.filter((item) => {
     if (!item.date) return false;
     const currentYearString = new Date().getFullYear().toString();
     const logDateLower = item.date.toLowerCase();
@@ -303,7 +378,7 @@ export default function HistoryScreen() {
           <Ionicons name="time-outline" size={18} color="#1A202C" />
           <Text style={styles.sectionTitle}>Attendance Logs Timeline</Text>
         </View>
-        <TouchableOpacity style={styles.refreshIconBtn} onPress={() => { fetchEmployeeLunchProfile(); fetchPermanentCloudHistory(); }}>
+        <TouchableOpacity style={styles.refreshIconBtn} onPress={() => { fetchEmployeeLunchProfile(); fetchPermanentCloudHistory(); fetchHolidaysData(); }}>
           <Ionicons name="refresh-outline" size={13} color="#2B6CB0" style={{ marginRight: 4 }} />
           <Text style={styles.refreshIconText}>Refresh</Text>
         </TouchableOpacity>
@@ -335,7 +410,7 @@ export default function HistoryScreen() {
         >
           <Ionicons name="calendar-sharp" size={18} color="#007AFF" style={{ marginRight: 8 }} />
           <Text style={[styles.calendarPickerBtnText, selectedDate && styles.calendarPickerSelectedText]}>
-            {selectedDate ? `Exact Date Filter: ${selectedDate}` : 'Or Pick Exact Date from Calendar'}
+            {selectedDate ? `Exact Date Filter: ${selectedDate}` : 'Or Pick Exact Date from Color-Coded Calendar'}
           </Text>
         </TouchableOpacity>
 
@@ -370,8 +445,9 @@ export default function HistoryScreen() {
             const hasInPhoto = !!item.capturedPhotoInUri;
             const hasOutPhoto = !!item.capturedPhotoOutUri;
             const isAbsent = item.loginTime === 'ABSENT' || item.logoutTime === 'ABSENT';
-            
             const isSunday = item.isSundayPlaceholder || item.dayOfWeek?.toLowerCase() === 'sunday' || new Date(item.date).getDay() === 0;
+            const isHoliday = item.isHolidayPlaceholder;
+            const isCL = item.isCasualLeave || item.loginTime === 'CASUAL LEAVE';
 
             return (
               <View key={item._id} style={styles.dayGroupCardWrapper}>
@@ -381,16 +457,28 @@ export default function HistoryScreen() {
                     styles.dayGroupCard, 
                     isExpanded && styles.dayGroupCardExpanded,
                     isAbsent && styles.dayGroupCardAbsent,
-                    isSunday && { backgroundColor: '#F7FAFC', borderColor: '#CBD5E0' }
+                    isSunday && { backgroundColor: '#F7FAFC', borderColor: '#CBD5E0' },
+                    isHoliday && { backgroundColor: '#FFFAF0', borderColor: '#FBD38D' },
+                    isCL && { backgroundColor: '#F0FDF4', borderColor: '#BBF7D0' }
                   ]}
-                  onPress={() => !isSunday && handleToggleDrawer(item._id)}
+                  onPress={() => !isSunday && !isHoliday && !isCL && handleToggleDrawer(item._id)}
                 >
                   <View style={styles.dayHeader}>
                     <View>
-                      <Text style={[styles.dayText, isAbsent && { color: '#E53E3E' }, isSunday && { color: '#4A5568' }]}>{item.dayOfWeek || 'Sunday'}</Text>
+                      <Text style={[styles.dayText, isAbsent && { color: '#E53E3E' }, isSunday && { color: '#4A5568' }, isHoliday && { color: '#DD6B20' }, isCL && { color: '#16A34A' }]}>
+                        {isHoliday ? item.holidayTitle : isCL ? 'Casual Leave (CL)' : (item.dayOfWeek || 'Sunday')}
+                      </Text>
                       <Text style={styles.dateText}>{item.date}</Text>
                     </View>
-                    {isSunday ? (
+                    {isHoliday ? (
+                      <View style={[styles.photoLoggedBadge, { backgroundColor: '#FFFAF0', borderColor: '#FBD38D' }]}>
+                        <Text style={[styles.photoLoggedBadgeText, { color: '#DD6B20' }]}>🎉 Company Holiday</Text>
+                      </View>
+                    ) : isCL ? (
+                      <View style={[styles.photoLoggedBadge, { backgroundColor: '#F0FDF4', borderColor: '#BBF7D0' }]}>
+                        <Text style={[styles.photoLoggedBadgeText, { color: '#16A34A' }]}>🌿 Casual Leave</Text>
+                      </View>
+                    ) : isSunday ? (
                       <View style={[styles.photoLoggedBadge, { backgroundColor: '#EDF2F7', borderColor: '#CBD5E0' }]}>
                         <Text style={[styles.photoLoggedBadgeText, { color: '#4A5568' }]}>🏖️ Weekend Off</Text>
                       </View>
@@ -402,7 +490,17 @@ export default function HistoryScreen() {
                     )}
                   </View>
 
-                  {isSunday ? (
+                  {isHoliday ? (
+                    <View style={[styles.punchItem, { backgroundColor: '#FFFAF0', borderColor: '#FBD38D', width: '100%', alignItems: 'center', paddingVertical: 10 }]}>
+                      <Text style={[styles.punchLabel, { color: '#DD6B20' }]}>STATUS</Text>
+                      <Text style={[styles.punchTime, { color: '#7B341E' }]}>{item.holidayTitle} - Holiday / Leave</Text>
+                    </View>
+                  ) : isCL ? (
+                    <View style={[styles.punchItem, { backgroundColor: '#F0FDF4', borderColor: '#BBF7D0', width: '100%', alignItems: 'center', paddingVertical: 10 }]}>
+                      <Text style={[styles.punchLabel, { color: '#16A34A' }]}>STATUS</Text>
+                      <Text style={[styles.punchTime, { color: '#15803D' }]}>Casual Leave (CL) - Approved</Text>
+                    </View>
+                  ) : isSunday ? (
                     <View style={[styles.punchItem, { backgroundColor: '#EDF2F7', borderColor: '#CBD5E0', width: '100%', alignItems: 'center', paddingVertical: 10 }]}>
                       <Text style={[styles.punchLabel, { color: '#4A5568' }]}>STATUS</Text>
                       <Text style={[styles.punchTime, { color: '#2D3748' }]}>Sunday - Non-Working Day</Text>
@@ -432,12 +530,12 @@ export default function HistoryScreen() {
                     </View>
                   )}
 
-                  {(hasInPhoto || hasOutPhoto) && !isExpanded && !isAbsent && !isSunday && (
+                  {(hasInPhoto || hasOutPhoto) && !isExpanded && !isAbsent && !isSunday && !isHoliday && !isCL && (
                     <Text style={styles.expandTipText}>Tap card to inspect compliance captures ▼</Text>
                   )}
                 </TouchableOpacity>
 
-                {isExpanded && !isAbsent && !isSunday && (
+                {isExpanded && !isAbsent && !isSunday && !isHoliday && !isCL && (
                   <View style={styles.photoDrawerContainer}>
                     <Text style={styles.drawerLabelTitle}>Biometric Verification Snapshots:</Text>
                     <View style={styles.photoGridRow}>
@@ -501,6 +599,7 @@ export default function HistoryScreen() {
         </ScrollView>
       )}
 
+      {/* 🌟 COLOR-CODED CALENDAR POPUP MODAL */}
       <Modal
         visible={isCalendarVisible}
         transparent={true}
@@ -524,6 +623,15 @@ export default function HistoryScreen() {
               </TouchableOpacity>
             </View>
 
+            {/* Legend guide */}
+            <View style={styles.legendRow}>
+              <View style={styles.legendItem}><View style={[styles.legendDot, { backgroundColor: '#3B82F6' }]} /><Text style={styles.legendText}>Present</Text></View>
+              <View style={styles.legendItem}><View style={[styles.legendDot, { backgroundColor: '#EF4444' }]} /><Text style={styles.legendText}>Absent</Text></View>
+              <View style={styles.legendItem}><View style={[styles.legendDot, { backgroundColor: '#22C55E' }]} /><Text style={styles.legendText}>CL</Text></View>
+              <View style={styles.legendItem}><View style={[styles.legendDot, { backgroundColor: '#EAB308' }]} /><Text style={styles.legendText}>Sun</Text></View>
+              <View style={styles.legendItem}><View style={[styles.legendDot, { backgroundColor: '#F59E0B' }]} /><Text style={styles.legendText}>Holiday</Text></View>
+            </View>
+
             <View style={styles.weekDaysRow}>
               {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d, index) => (
                 <Text key={index} style={styles.weekDayText}>{d}</Text>
@@ -540,14 +648,19 @@ export default function HistoryScreen() {
                 const cellObj = new Date(year, month, dayNum);
                 const cellFormatted = cellObj.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
                 const isSelected = selectedDate === cellFormatted;
+                const statusStyle = getDayStatusStyle(cellObj);
 
                 return (
                   <TouchableOpacity
                     key={dayNum}
-                    style={[styles.dayCell, isSelected && styles.selectedDayCell]}
+                    style={[
+                      styles.dayCell, 
+                      { backgroundColor: statusStyle.bg },
+                      isSelected && { borderWidth: 2, borderColor: '#000000' }
+                    ]}
                     onPress={() => handleSelectDay(dayNum)}
                   >
-                    <Text style={[styles.dayCellText, isSelected && styles.selectedDayCellText]}>
+                    <Text style={[styles.dayCellText, { color: statusStyle.text }]}>
                       {dayNum}
                     </Text>
                   </TouchableOpacity>
@@ -639,22 +752,29 @@ const styles = StyleSheet.create({
   calendarPickerBtnText: { fontSize: 12, color: '#718096', fontWeight: '600' },
   calendarPickerSelectedText: { color: '#007AFF', fontWeight: '800' },
   clearDateFilterBtn: { marginLeft: 8, padding: 4 },
+  
   calendarModalCard: { width: '100%', maxWidth: 350, backgroundColor: '#FFFFFF', borderRadius: 24, padding: 18, borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.25, shadowRadius: 15, elevation: 10 },
-  calendarHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  calendarHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   calNavBtn: { padding: 6, backgroundColor: '#EDF2F7', borderRadius: 10 },
   calMonthTitle: { fontSize: 15, fontWeight: '800', color: '#1A202C' },
+  
+  legendRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12, paddingHorizontal: 4 },
+  legendItem: { flexDirection: 'row', alignItems: 'center' },
+  legendDot: { width: 8, height: 8, borderRadius: 4, marginRight: 4 },
+  legendText: { fontSize: 9, fontWeight: '700', color: '#64748B' },
+
   weekDaysRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
   weekDayText: { width: '14.28%', textAlign: 'center', fontSize: 11, fontWeight: '800', color: '#A0AEC0' },
   daysGrid: { flexDirection: 'row', flexWrap: 'wrap', width: '100%' },
-  dayCell: { width: '14.28%', height: 40, justifyContent: 'center', alignItems: 'center', marginVertical: 2, borderRadius: 10 },
-  dayCellText: { fontSize: 13, fontWeight: '700', color: '#2D3748' },
-  selectedDayCell: { backgroundColor: '#007AFF' },
-  selectedDayCellText: { color: '#FFFFFF', fontWeight: '900' },
+  dayCell: { width: '14.28%', height: 38, justifyContent: 'center', alignItems: 'center', marginVertical: 2, borderRadius: 8 },
+  dayCellText: { fontSize: 12, fontWeight: '800' },
+  
   calModalFooterRow: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: 16, borderTopWidth: 1, borderTopColor: '#EDF2F7', paddingTop: 12 },
   calResetBtn: { backgroundColor: '#FFF5F5', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10, marginRight: 8, borderWidth: 1, borderColor: '#FED7D7' },
   calResetBtnText: { color: '#E53E3E', fontSize: 12, fontWeight: '700' },
   calCloseBtn: { backgroundColor: '#EDF2F7', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 10 },
   calCloseBtnText: { color: '#4A5568', fontSize: 12, fontWeight: '700' },
+
   dayGroupCardWrapper: { marginBottom: 10 },
   dayGroupCard: { backgroundColor: '#FFFFFF', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.01, shadowRadius: 4, elevation: 1 },
   dayGroupCardExpanded: { borderBottomLeftRadius: 0, borderBottomRightRadius: 0, borderBottomWidth: 0, borderColor: '#CBD5E0', shadowOpacity: 0, elevation: 0 },
