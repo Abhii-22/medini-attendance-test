@@ -4,6 +4,7 @@ import { useAuth, API_BASE_URL } from './_layout';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 import * as XLSX from 'xlsx';
+import FaceEnrollModal from '@/components/FaceEnrollModal';
 
 interface EmployeeProfile {
   _id: string;
@@ -15,6 +16,7 @@ interface EmployeeProfile {
   lunchBreakMinutes?: number;
   monthlyCasualLeaveLimit?: number;
   role?: string[];
+  faceIds?: string[];
 }
 
 interface AttendanceRecord {
@@ -66,6 +68,9 @@ export default function AdminScreen() {
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
   const [empSearchQuery, setEmpSearchQuery] = useState<string>('');
+
+  // 🧑 Face enrollment target (opens the camera modal when set)
+  const [faceTarget, setFaceTarget] = useState<EmployeeProfile | null>(null);
   const [logSearchQuery, setLogSearchQuery] = useState<string>('');
 
   // Location form states
@@ -1120,6 +1125,16 @@ export default function AdminScreen() {
                       </Text>
                     </View>
                     <View style={styles.crudActionRow}>
+                      {!isAdminView && (
+                        <TouchableOpacity
+                          style={[styles.actionPillEdit, item.faceIds && item.faceIds.length > 0 ? { backgroundColor: '#F0FFF4', borderColor: '#C6F6D5' } : { backgroundColor: '#FFFAF0', borderColor: '#FEEBC8' }]}
+                          onPress={() => setFaceTarget(item)}
+                        >
+                          <Text style={[styles.actionPillTextEdit, { color: item.faceIds && item.faceIds.length > 0 ? '#2F855A' : '#C05621' }]}>
+                            {item.faceIds && item.faceIds.length > 0 ? 'Face ✓' : 'Face'}
+                          </Text>
+                        </TouchableOpacity>
+                      )}
                       <TouchableOpacity style={styles.actionPillEdit} onPress={() => handleSelectEditEmployee(item)}>
                         <Text style={styles.actionPillTextEdit}>Edit</Text>
                       </TouchableOpacity>
@@ -1664,6 +1679,15 @@ export default function AdminScreen() {
           </View>
         </TouchableOpacity>
       </Modal>
+
+      {/* 🧑 FACE ENROLLMENT CAMERA MODAL */}
+      <FaceEnrollModal
+        visible={faceTarget !== null}
+        apiBaseUrl={API_BASE_URL}
+        employee={faceTarget}
+        onClose={() => setFaceTarget(null)}
+        onEnrolled={fetchEmployeesList}
+      />
 
     </View>
   );

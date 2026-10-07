@@ -1,0 +1,17 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "rekognition:CreateCollection",
+        "rekognition:DescribeCollection",
+        "rekognition:DetectFaces",
+        "rekognition:IndexFaces",
+        "rekognition:SearchFacesByImage",
+        "rekognition:DeleteFaces"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

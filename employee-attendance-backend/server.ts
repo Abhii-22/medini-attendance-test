@@ -10,6 +10,15 @@ import adminRoutes from './routes/adminRoutes.js';
 import attendanceRoutes from './routes/attendanceRoutes.js';
 
 dotenv.config();
+
+// Fail fast if required secrets are missing
+const requiredEnv = ['CLOUDINARY_CLOUD_NAME', 'CLOUDINARY_API_KEY', 'CLOUDINARY_API_SECRET', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY'];
+const missingEnv = requiredEnv.filter((k) => !process.env[k]);
+if (missingEnv.length > 0) {
+  console.error('Missing required environment variables:', missingEnv.join(', '));
+  process.exit(1);
+}
+
 const app = express();
 app.use(cors());
 
@@ -24,9 +33,9 @@ process.on('unhandledRejection', (reason: any) => {
 
 // 🌐 CLOUDINARY CONFIGURATION BRIDGE
 cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME || 'dfd0kotgh',
-  api_key: process.env.CLOUDINARY_API_KEY || '272929261371422',
-  api_secret: process.env.CLOUDINARY_API_SECRET || 'CSVbxl3UBIhBWkyTmKBqjputk-E', 
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME as string, // validated at startup above
+  api_key: process.env.CLOUDINARY_API_KEY as string,
+  api_secret: process.env.CLOUDINARY_API_SECRET as string,
 });
 
 // 🛣️ MOUNT ROUTES

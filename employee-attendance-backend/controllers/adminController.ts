@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import { RegisteredEmployee, AttendanceShiftLog, OfficeLocation, Holiday } from '../models/AttendanceSchemas.js';
+import { enrollFaces, deleteFaces, dataUriToBuffer } from '../services/rekognition.js';
 
 export const registerEmployee = async (req: Request, res: Response): Promise<any> => {
   const { email, employeeId, name, designation, password, role, lunchBreakMinutes, monthlyCasualLeaveLimit } = req.body;
@@ -119,6 +120,13 @@ export const deleteEmployee = async (req: Request, res: Response): Promise<any> 
       return res.status(404).json({ success: false, message: "Profile record not active in registry directory." });
     }
 
+    // Remove this employee's faces from AWS Rekognition (non-blocking on failure)
+    try {
+      await deleteFaces(employeeRecord.faceIds || []);
+    } catch (faceErr) {
+      console.error('Face cleanup failed for', employeeRecord.employeeId, faceErr);
+    }
+
     await AttendanceShiftLog.deleteMany({ employeeIdReference: employeeRecord.employeeId });
     await RegisteredEmployee.findByIdAndDelete(targetMongoId);
 
@@ -127,6 +135,9 @@ export const deleteEmployee = async (req: Request, res: Response): Promise<any> 
     return res.status(500).json({ success: false, message: "Failed to isolate cluster document targets.", error: err });
   }
 };
+
+// 0 = January. Absent days are generated from this month of the current year up to yesterday.
+const TRACKING_START_MONTH = 0;
 
 export const getAttendanceSheet = async (req: Request, res: Response): Promise<any> => {
   try {
@@ -166,14 +177,33 @@ export const getAttendanceSheet = async (req: Request, res: Response): Promise<a
 
     let newlyDetectedLogs: any[] = [];
 
-    for (const emp of targetEmployees) {
-      let absentCounterForMonth = 0;
-      const empAny = emp as any;
-      const monthlyClLimit = empAny.monthlyCasualLeaveLimit !== undefined ? Number(empAny.monthlyCasualLeaveLimit) : 0;
+    // Earliest saved log per employee (so history before registration date is still covered)
+    const earliestLogByEmp = new Map<string, Date>();
+    sheets.forEach((log: any) => {
+      const d = new Date(log.date);
+      if (isNaN(d.getTime())) return;
+      const k = String(log.employeeIdReference).toUpperCase();
+      const prev = earliestLogByEmp.get(k);
+      if (!prev || d < prev) earliestLogByEmp.set(k, d);
+    });
 
-      for (let day = 1; day < todayDateNum; day++) {
-        const dateObj = new Date(currentYear, currentMonth, day);
-        if (dateObj > now) break; // 🌟 Strictly stop at today
+    const todayStart = new Date(currentYear, currentMonth, todayDateNum);
+
+    for (const emp of targetEmployees) {
+      // Show absences for ALL previous months of this year (not limited to registration date).
+      // Change TRACKING_START_MONTH to 0 for January, 3 for April, etc.
+      let startDate = new Date(currentYear, TRACKING_START_MONTH, 1);
+      const firstLog = earliestLogByEmp.get(String(emp.employeeId).toUpperCase());
+      if (firstLog && firstLog < startDate && firstLog.getFullYear() === currentYear) {
+        startDate = new Date(firstLog.getFullYear(), firstLog.getMonth(), firstLog.getDate());
+      }
+
+      for (
+        let cursor = new Date(startDate);
+        cursor < todayStart; // strictly before today
+        cursor.setDate(cursor.getDate() + 1)
+      ) {
+        const dateObj = new Date(cursor);
         if (dateObj.getDay() === 0) continue;
 
         const formattedDateStr = dateObj.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
@@ -202,31 +232,79 @@ export const getAttendanceSheet = async (req: Request, res: Response): Promise<a
               holidayTitle: holidayTitle
             });
           } else {
-            absentCounterForMonth++;
-            const isCl = absentCounterForMonth <= monthlyClLimit;
-
             newlyDetectedLogs.push({
-              _id: `${isCl ? 'cl' : 'absent'}-${emp.employeeId}-${formattedDateStr}`,
+              _id: `absent-${emp.employeeId}-${formattedDateStr}`,
               employeeIdReference: emp.employeeId,
               employeeName: emp.name,
               date: formattedDateStr,
               dayOfWeek: dayOfWeekStr,
-              loginTime: isCl ? 'CASUAL LEAVE' : 'ABSENT',
-              logoutTime: isCl ? 'CASUAL LEAVE' : 'ABSENT',
+              loginTime: 'ABSENT',
+              logoutTime: 'ABSENT',
               capturedPhotoInUri: '',
               capturedPhotoOutUri: '',
               locationInAddress: '',
               locationOutAddress: '',
-              isVirtualAbsent: !isCl,
-              isCasualLeave: isCl,
-              holidayTitle: isCl ? 'Casual Leave (CL)' : undefined
+              isVirtualAbsent: true
             });
           }
         }
       }
     }
 
-    const combined = [...sheets, ...newlyDetectedLogs];
+    const normDate = (d: string) => String(d).replace(',', '').replace(/\s+/g, ' ').toLowerCase().trim();
+    const clLimitByEmp = new Map<string, number>();
+    allEmployees.forEach((e: any) => {
+      clLimitByEmp.set(String(e.employeeId).toUpperCase(), Number(e.monthlyCasualLeaveLimit) || 0);
+    });
+
+    const combined: any[] = [
+      ...sheets.map((l: any) => (typeof l.toObject === 'function' ? l.toObject() : l)),
+      ...newlyDetectedLogs
+    ];
+
+    // RULE 1: a holiday date always shows HOLIDAY (unless the employee really punched in that day)
+    combined.forEach((log: any) => {
+      const title = holidaysMap.get(normDate(log.date));
+      if (!title) return;
+      const hasRealPunch = [log.loginTime, log.logoutTime].some(
+        (t: string) => t && !['--:--', 'ABSENT', 'CASUAL LEAVE', 'HOLIDAY', 'OFF'].includes(t)
+      );
+      if (hasRealPunch) return;
+      log.loginTime = 'HOLIDAY';
+      log.logoutTime = 'HOLIDAY';
+      log.isHolidayPlaceholder = true;
+      log.holidayTitle = title;
+      log.isCasualLeave = false;
+      log.isVirtualAbsent = false;
+    });
+
+    // RULE 2: per employee, per month, the FIRST N absent days (N = admin CL limit) become CL
+    const absentGroups = new Map<string, any[]>();
+    combined.forEach((log: any) => {
+      if (log.isHolidayPlaceholder) return;
+      if (log.loginTime !== 'ABSENT' && log.logoutTime !== 'ABSENT') return;
+      const d = new Date(log.date);
+      if (isNaN(d.getTime())) return;
+      const key = `${String(log.employeeIdReference).toUpperCase()}|${d.getFullYear()}-${d.getMonth()}`;
+      if (!absentGroups.has(key)) absentGroups.set(key, []);
+      absentGroups.get(key)!.push(log);
+    });
+
+    absentGroups.forEach((group, key) => {
+      const empId = key.split('|')[0] as string;
+      const limit = clLimitByEmp.get(empId) ?? 0;
+      group.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      group.slice(0, limit).forEach((log: any) => {
+        log.loginTime = 'CASUAL LEAVE';
+        log.logoutTime = 'CASUAL LEAVE';
+        log.isCasualLeave = true;
+        log.isVirtualAbsent = false;
+        log.holidayTitle = 'Casual Leave (CL)';
+        log.capturedPhotoInUri = '';
+        log.capturedPhotoOutUri = '';
+      });
+    });
+
     combined.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
     return res.status(200).json(combined);
@@ -591,5 +669,76 @@ export const bulkAddHolidays = async (req: Request, res: Response): Promise<any>
     });
   } catch (err: any) {
     return res.status(500).json({ success: false, message: 'Failed to process bulk holidays.', error: err.message });
+  }
+};
+
+/* ------------------------------------------------------------------ *
+ *  FACE ENROLLMENT  (POST /api/admin/enroll-face)
+ *  body: { _id: string, photos: string[]  // data:image/jpeg;base64,... }
+ *  Re-enrolling replaces the employee's previous faces.
+ * ------------------------------------------------------------------ */
+export const enrollFace = async (req: Request, res: Response): Promise<any> => {
+  const { _id, photos } = req.body;
+
+  if (!_id || !Array.isArray(photos) || photos.length === 0) {
+    return res.status(400).json({ success: false, message: 'Employee reference and at least one photo are required.' });
+  }
+  if (photos.length > 5) {
+    return res.status(400).json({ success: false, message: 'Maximum 5 photos allowed per enrollment.' });
+  }
+
+  try {
+    const employee = await RegisteredEmployee.findById(_id);
+    if (!employee) {
+      return res.status(404).json({ success: false, message: 'Employee record not found.' });
+    }
+
+    const buffers = photos.map((p: string) => dataUriToBuffer(String(p)));
+    const result = await enrollFaces(employee.employeeId, buffers);
+
+    if (!result.success) {
+      return res.status(422).json({ success: false, message: result.message });
+    }
+
+    // New faces are safely stored; now remove the old ones.
+    const oldFaceIds = employee.faceIds || [];
+    employee.faceIds = result.faceIds;
+    employee.faceEnrolledAt = new Date();
+    await employee.save();
+
+    if (oldFaceIds.length > 0) {
+      await deleteFaces(oldFaceIds).catch((e) => console.error('Old face cleanup failed:', e));
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: result.message,
+      faceCount: result.faceIds.length,
+      employee,
+    });
+  } catch (err: any) {
+    console.error('enrollFace error:', err);
+    return res.status(500).json({ success: false, message: err?.message || 'Face enrollment failed on the server.' });
+  }
+};
+
+/* ------------------------------------------------------------------ *
+ *  FACE REMOVAL  (DELETE /api/admin/face/:id)
+ * ------------------------------------------------------------------ */
+export const removeFace = async (req: Request, res: Response): Promise<any> => {
+  try {
+    const employee = await RegisteredEmployee.findById(req.params.id);
+    if (!employee) {
+      return res.status(404).json({ success: false, message: 'Employee record not found.' });
+    }
+
+    await deleteFaces(employee.faceIds || []);
+    employee.faceIds = [];
+    employee.set('faceEnrolledAt', undefined);
+    await employee.save();
+
+    return res.status(200).json({ success: true, message: 'Face data removed.', employee });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, message: err?.message || 'Failed to remove face data.' });
   }
 };

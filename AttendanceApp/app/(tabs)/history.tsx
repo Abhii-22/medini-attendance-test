@@ -264,15 +264,24 @@ export default function HistoryScreen() {
       }
     }
 
+    // A log with no real punch (absent / CL / empty) must never replace a holiday.
+    const hasRealPunch = (l: BackendLog) =>
+      [l.loginTime, l.logoutTime].some(
+        (t) => !!t && !['--:--', 'ABSENT', 'CASUAL LEAVE', 'HOLIDAY', 'OFF'].includes(t)
+      );
+
     cloudLogs.forEach(log => {
       if (log.date) {
         const timestamp = parseDateToTimestamp(log.date);
-        if (timestamp > 0) {
-          const standardizedDateStr = new Date(timestamp).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-          allDaysMap.set(standardizedDateStr, log);
-        } else {
-          allDaysMap.set(log.date, log);
+        const key = timestamp > 0
+          ? new Date(timestamp).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+          : log.date;
+
+        const existing = allDaysMap.get(key);
+        if (existing?.isHolidayPlaceholder && !hasRealPunch(log)) {
+          return; // keep HOLIDAY
         }
+        allDaysMap.set(key, log);
       }
     });
 

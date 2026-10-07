@@ -268,10 +268,8 @@ export default function AttendanceScreen() {
     if (cameraRef.current) {
       try {
         const options = { 
-          quality: 0.2, 
-          skipProcessing: false,
-          maxHeight: 480,
-          maxWidth: 480
+          quality: 0.5, // higher quality = more reliable face matching
+          skipProcessing: false
         }; 
         const photo = await cameraRef.current.takePictureAsync(options);
         
@@ -311,10 +309,10 @@ export default function AttendanceScreen() {
 
   const executeCloudAttendanceSubmission = async (type: 'LOGIN' | 'LOGOUT' | 'ABSENT', photoPayloadString: string, addressString: string) => {
     setLoading(true);
-    setLoadingMessage('Uploading shift metrics to database cluster...');
+    setLoadingMessage(type === 'ABSENT' ? 'Uploading shift metrics to database cluster...' : 'Verifying your face & saving punch...');
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 25000);
+    const timeoutId = setTimeout(() => controller.abort(), 45000);
 
     try {
       const response = await fetch(`${API_BASE_URL}/attendance/punch-clock`, {
@@ -353,8 +351,23 @@ export default function AttendanceScreen() {
         Alert.alert('Success 🎉', `Log successfully synchronized permanently.`);
         resetState();
       } else {
-        Alert.alert('Upload Failed 🚫', result.message || 'Server rejected storage process.');
-        setLoading(false);
+        const code: string = result.code || '';
+
+        if (code === 'FACE_NOT_ENROLLED') {
+          // Nothing the employee can fix here: an admin must enroll the face first.
+          Alert.alert('Face Not Enrolled 🧑', result.message);
+          resetState();
+        } else if (code.startsWith('FACE_')) {
+          // Mismatch / no face / blurry: discard the photo and reopen the camera to retake.
+          Alert.alert('Face Check Failed ❌', result.message || 'Face could not be verified. Please try again.');
+          setCapturedPhoto(null);
+          setBase64PhotoData(null);
+          setLoading(false);
+          setShowCamera(true);
+        } else {
+          Alert.alert('Upload Failed 🚫', result.message || 'Server rejected storage process.');
+          setLoading(false);
+        }
       }
     } catch (error: any) {
       clearTimeout(timeoutId);

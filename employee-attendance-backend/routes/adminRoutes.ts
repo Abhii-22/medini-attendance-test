@@ -13,7 +13,9 @@ import {
   getHolidays,
   addHoliday,
   deleteHoliday,
-  bulkAddHolidays
+  bulkAddHolidays,
+  enrollFace,
+  removeFace
 } from '../controllers/adminController.js';
 
 const router = Router();
@@ -24,6 +26,10 @@ router.put('/update-employee', updateEmployee);
 router.delete('/delete-employee/:id', deleteEmployee);
 router.get('/attendance-sheet', getAttendanceSheet);
 router.get('/download-attendance', downloadAttendance);
+
+// 🧑 Face Recognition Routes (AWS Rekognition)
+router.post('/enroll-face', enrollFace);
+router.delete('/face/:id', removeFace);
 
 // 📍 Office Location Management Routes
 router.get('/locations', getOfficeLocations);

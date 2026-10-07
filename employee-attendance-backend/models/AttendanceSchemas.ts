@@ -12,6 +12,8 @@ export interface IEmployeeProfile extends Document {
   role: string[];
   lunchBreakMinutes?: number; 
   monthlyCasualLeaveLimit?: number; 
+  faceIds?: string[];        // AWS Rekognition FaceIds enrolled for this employee
+  faceEnrolledAt?: Date;
 }
 
 export interface IAttendanceShiftLog extends Document {
@@ -25,6 +27,8 @@ export interface IAttendanceShiftLog extends Document {
   capturedPhotoOutUri: string;
   locationInAddress: string;   
   locationOutAddress: string;   
+  faceMatchInScore?: number | null;   // Rekognition similarity at punch-in
+  faceMatchOutScore?: number | null;  // Rekognition similarity at punch-out
 }
 
 export interface IAdminCredential extends Document {
@@ -60,7 +64,9 @@ const EmployeeProfileSchema = new Schema<IEmployeeProfile>({
   password: { type: String, required: true },
   role: { type: [String], default: ['EMPLOYEE'] },
   lunchBreakMinutes: { type: Number, default: 0 },
-  monthlyCasualLeaveLimit: { type: Number, default: 0 }
+  monthlyCasualLeaveLimit: { type: Number, default: 0 },
+  faceIds: { type: [String], default: [] },
+  faceEnrolledAt: { type: Date }
 }, { timestamps: true });
 
 // ----------------------------------------------------
@@ -76,7 +82,9 @@ const ShiftLogSchema = new Schema<IAttendanceShiftLog>({
   capturedPhotoInUri: { type: String, default: '' }, 
   capturedPhotoOutUri: { type: String, default: '' },
   locationInAddress: { type: String, default: '' },
-  locationOutAddress: { type: String, default: '' }
+  locationOutAddress: { type: String, default: '' },
+  faceMatchInScore: { type: Number, default: null },
+  faceMatchOutScore: { type: Number, default: null }
 }, { timestamps: true });
 
 // ----------------------------------------------------
