@@ -10,8 +10,8 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { AttendanceProvider } from "@/constants/AttendanceContext";
 
-// export const API_BASE_URL = "https://attentdanceapi.techvruddhi.com/api";
-export const API_BASE_URL = "http://192.168.1.13:5000/api";
+export const API_BASE_URL = "https://attentdanceapi.techvruddhi.com/api";
+// export const API_BASE_URL = "http://192.168.1.13:5000/api";
 
 const SESSION_KEYS = [
   "@current_user",
