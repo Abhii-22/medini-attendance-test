@@ -28,6 +28,12 @@ export default function AttendanceScreen() {
   const [currentDateTime, setCurrentDateTime] = useState<string>('');
   const [isMocked, setIsMocked] = useState<boolean>(false);
 
+  // 🧬 LIVENESS (anti-spoof) STATES
+  const [livenessStep, setLivenessStep] = useState<'STRAIGHT' | 'CHALLENGE'>('STRAIGHT');
+  const [livenessChallenge, setLivenessChallenge] = useState<{ token: string; type: 'SMILE' | 'TURN_HEAD' | 'CLOSE_EYES' } | null>(null);
+  const [livenessPhoto, setLivenessPhoto] = useState<string | null>(null);
+  const [countdown, setCountdown] = useState<number>(0);
+
   // 🔒 TODAY'S PUNCH LOCK STATES
   const [hasPunchedIn, setHasPunchedIn] = useState<boolean>(false);
   const [hasPunchedOut, setHasPunchedOut] = useState<boolean>(false);
@@ -264,38 +270,95 @@ export default function AttendanceScreen() {
     }
   };
 
+  const restartLiveness = () => {
+    setLivenessStep('STRAIGHT');
+    setLivenessChallenge(null);
+    setLivenessPhoto(null);
+    setCapturedPhoto(null);
+    setBase64PhotoData(null);
+    setCountdown(0);
+  };
+
+  const captureFrame = async (): Promise<{ uri: string; dataUri: string }> => {
+    const photo = await cameraRef.current.takePictureAsync({ quality: 0.5, skipProcessing: false });
+    if (!photo || !photo.uri) throw new Error('No photo');
+    const LegacyFS = require('expo-file-system/legacy');
+    const base64Content = await LegacyFS.readAsStringAsync(photo.uri, { encoding: 'base64' });
+    return { uri: photo.uri, dataUri: `data:image/jpeg;base64,${base64Content}` };
+  };
+
+  // STEP 1: straight, neutral photo -> then ask the server for a random action
   const takeSelfie = async () => {
-    if (cameraRef.current) {
-      try {
-        const options = { 
-          quality: 0.5, // higher quality = more reliable face matching
-          skipProcessing: false
-        }; 
-        const photo = await cameraRef.current.takePictureAsync(options);
-        
-        if (photo && photo.uri) {
-          setLoading(true);
-          setLoadingMessage('Optimizing image & attaching geotag...');
-          setCapturedPhoto(photo.uri); 
+    if (!cameraRef.current || loading || livenessStep !== 'STRAIGHT') return;
+    try {
+      setLoading(true);
+      setLoadingMessage('Starting live check...');
+      const frame = await captureFrame();
 
-          const LegacyFS = require('expo-file-system/legacy');
-          const base64Content = await LegacyFS.readAsStringAsync(photo.uri, {
-            encoding: 'base64', 
-          });
+      const res = await fetch(`${API_BASE_URL}/attendance/liveness-challenge`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ employeeId })
+      });
+      const data = await res.json();
 
-          setBase64PhotoData(`data:image/jpeg;base64,${base64Content}`);
-          setShowCamera(false);
-          setLoading(false);
-        }
-      } catch (err) {
+      if (!res.ok || !data.success) {
+        Alert.alert('Live Check Error', data.message || 'Could not start the live check. Try again.');
         setLoading(false);
-        Alert.alert('Camera Error', 'Failed to compile image metrics.');
+        return;
       }
+
+      setCapturedPhoto(frame.uri);
+      setBase64PhotoData(frame.dataUri);
+      setLivenessChallenge({ token: data.token, type: data.challenge });
+      setLivenessStep('CHALLENGE');
+      setLoading(false);
+    } catch (err) {
+      setLoading(false);
+      Alert.alert('Camera Error', 'Failed to capture the photo. Please try again.');
     }
   };
 
+  // STEP 2: auto-capture after the countdown while the person performs the action
+  const captureChallengeFrame = async () => {
+    if (!cameraRef.current) return;
+    try {
+      setLoading(true);
+      setLoadingMessage('Optimizing image & attaching geotag...');
+      const frame = await captureFrame();
+      setLivenessPhoto(frame.dataUri);
+      setShowCamera(false);
+      setLoading(false);
+    } catch (err) {
+      setLoading(false);
+      restartLiveness();
+      Alert.alert('Camera Error', 'Failed to capture the action photo. Please start again.');
+    }
+  };
+
+  useEffect(() => {
+    if (livenessStep !== 'CHALLENGE' || !showCamera) return;
+    let n = 3;
+    setCountdown(n);
+    const id = setInterval(() => {
+      n -= 1;
+      setCountdown(n);
+      if (n <= 0) {
+        clearInterval(id);
+        captureChallengeFrame();
+      }
+    }, 1000);
+    return () => clearInterval(id);
+  }, [livenessStep, showCamera]);
+
+  const challengeText =
+    livenessChallenge?.type === 'SMILE' ? 'Now SMILE 😀'
+    : livenessChallenge?.type === 'TURN_HEAD' ? 'Now TURN YOUR HEAD to the side'
+    : livenessChallenge?.type === 'CLOSE_EYES' ? 'Now CLOSE YOUR EYES'
+    : '';
+
   const handleSubmitAttendance = () => {
-    if ((attendanceType === 'LOGIN' || attendanceType === 'LOGOUT') && base64PhotoData) {
+    if ((attendanceType === 'LOGIN' || attendanceType === 'LOGOUT') && base64PhotoData && livenessPhoto && livenessChallenge) {
       executeCloudAttendanceSubmission(attendanceType, base64PhotoData, locationAddress);
     } else {
       Alert.alert('Missing Data', 'Please retake the photo before submitting.');
@@ -327,6 +390,8 @@ export default function AttendanceScreen() {
           name: employeeName,
           type: type,
           photoUri: photoPayloadString,
+          livenessToken: livenessChallenge?.token,
+          livenessPhotoUri: livenessPhoto,
           locationAddress: addressString,
           isMocked: isMocked
         })
@@ -360,8 +425,7 @@ export default function AttendanceScreen() {
         } else if (code.startsWith('FACE_')) {
           // Mismatch / no face / blurry: discard the photo and reopen the camera to retake.
           Alert.alert('Face Check Failed ❌', result.message || 'Face could not be verified. Please try again.');
-          setCapturedPhoto(null);
-          setBase64PhotoData(null);
+          restartLiveness();
           setLoading(false);
           setShowCamera(true);
         } else {
@@ -385,6 +449,10 @@ export default function AttendanceScreen() {
     setAttendanceType(null);
     setCapturedPhoto(null);
     setBase64PhotoData(null);
+    setLivenessStep('STRAIGHT');
+    setLivenessChallenge(null);
+    setLivenessPhoto(null);
+    setCountdown(0);
     setShowCamera(false);
     setLocationAddress('');
     setMatchedOfficeName('');
@@ -405,7 +473,11 @@ export default function AttendanceScreen() {
 
             <View style={styles.reticleContainer}>
               <View style={styles.faceTargetRing} />
-              <Text style={styles.cameraInstruction}>Position your face inside the green ring</Text>
+              <Text style={styles.cameraInstruction}>
+                {livenessStep === 'STRAIGHT'
+                  ? 'Look straight with a neutral face, then tap the button'
+                  : `${challengeText}  •  photo in ${countdown > 0 ? countdown : 0}s`}
+              </Text>
             </View>
 
             <View style={styles.shutterControlBar}>
@@ -413,7 +485,7 @@ export default function AttendanceScreen() {
                 <Text style={styles.closeBtnText}>Cancel</Text>
               </TouchableOpacity>
               
-              <TouchableOpacity style={styles.captureBtn} onPress={takeSelfie}>
+              <TouchableOpacity style={[styles.captureBtn, livenessStep === 'CHALLENGE' && { opacity: 0.3 }]} onPress={takeSelfie} disabled={livenessStep === 'CHALLENGE' || loading}>
                 <View style={styles.captureBtnInner} />
               </TouchableOpacity>
               
@@ -581,7 +653,7 @@ export default function AttendanceScreen() {
               )}
 
               <View style={styles.formActionButtonGroup}>
-                <TouchableOpacity style={styles.premiumRetakeBtn} onPress={() => setShowCamera(true)}>
+                <TouchableOpacity style={styles.premiumRetakeBtn} onPress={() => { restartLiveness(); setShowCamera(true); }}>
                   <Ionicons name="refresh" size={15} color="#4A5568" style={{ marginRight: 4 }} />
                   <Text style={styles.premiumRetakeBtnText}>Retake Selfie</Text>
                 </TouchableOpacity>

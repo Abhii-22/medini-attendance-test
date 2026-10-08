@@ -214,6 +214,101 @@ export async function verifyFace(employeeId: string, image: Buffer): Promise<Fac
   }
 }
 
+
+/* ------------------------------------------------------------------ *
+ *  LIVENESS (anti-spoof): the person must perform a random action
+ *  that a printed photo or a phone screen photo cannot perform.
+ * ------------------------------------------------------------------ */
+export type LivenessChallenge = 'SMILE' | 'TURN_HEAD' | 'CLOSE_EYES';
+export const LIVENESS_CHALLENGES: LivenessChallenge[] = ['SMILE', 'TURN_HEAD', 'CLOSE_EYES'];
+
+// Identity threshold for the challenge frame (head turned / eyes closed lowers similarity a bit)
+const LIVENESS_MATCH_THRESHOLD = Number(process.env.LIVENESS_MATCH_THRESHOLD || 80);
+
+async function detectOneFace(image: Buffer) {
+  const res = await client.send(new DetectFacesCommand({ Image: { Bytes: image }, Attributes: ['ALL'] }));
+  const faces = res.FaceDetails || [];
+  if (faces.length !== 1 || !faces[0]) return null;
+  return faces[0];
+}
+
+/**
+ * frameA = straight, neutral face. frameB = same person performing `challenge`.
+ * Both frames must be the logged-in employee, and the requested change must be visible.
+ */
+export async function checkLiveness(
+  employeeId: string,
+  frameA: Buffer,
+  frameB: Buffer,
+  challenge: LivenessChallenge,
+): Promise<FaceCheckResult> {
+  const fail = (message: string): FaceCheckResult => ({ status: 'LOW_QUALITY', message });
+
+  if (Buffer.compare(frameA, frameB) === 0) {
+    return fail('Live check failed. Please follow the on-screen action.');
+  }
+
+  const [a, b] = await Promise.all([detectOneFace(frameA), detectOneFace(frameB)]);
+  if (!a || !b) {
+    return fail('Live check failed: exactly one face must be visible in both photos.');
+  }
+
+  const yawA = a.Pose?.Yaw ?? 0;
+  const yawB = b.Pose?.Yaw ?? 0;
+
+  // First frame must be a straight, eyes-open, non-smiling face.
+  if (Math.abs(yawA) > 20) {
+    return fail('Look straight at the camera for the first photo.');
+  }
+  if (a.EyesOpen && a.EyesOpen.Value === false && (a.EyesOpen.Confidence ?? 0) >= 80 && challenge !== 'CLOSE_EYES') {
+    return fail('Keep your eyes open for the first photo.');
+  }
+
+  if (challenge === 'SMILE') {
+    if (a.Smile?.Value === true && (a.Smile.Confidence ?? 0) >= 80) {
+      return fail('Keep a neutral face for the first photo, then smile when asked.');
+    }
+    if (!(b.Smile?.Value === true && (b.Smile.Confidence ?? 0) >= 80)) {
+      return fail('Smile not detected. Please smile clearly when asked.');
+    }
+  } else if (challenge === 'TURN_HEAD') {
+    if (Math.abs(yawB - yawA) < 20) {
+      return fail('Head turn not detected. Turn your head clearly to the side when asked.');
+    }
+  } else if (challenge === 'CLOSE_EYES') {
+    if (!(a.EyesOpen?.Value === true)) {
+      return fail('Keep your eyes open for the first photo, then close them when asked.');
+    }
+    if (!(b.EyesOpen?.Value === false && (b.EyesOpen.Confidence ?? 0) >= 80)) {
+      return fail('Closed eyes not detected. Close your eyes fully when asked.');
+    }
+  }
+
+  // The challenge frame must ALSO be the logged-in employee (stops "photo first, live stranger second").
+  const externalId = toExternalId(employeeId);
+  try {
+    const res = await client.send(
+      new SearchFacesByImageCommand({
+        CollectionId: COLLECTION_ID,
+        Image: { Bytes: frameB },
+        MaxFaces: 5,
+        FaceMatchThreshold: LIVENESS_MATCH_THRESHOLD,
+      }),
+    );
+    const mine = (res.FaceMatches || []).some((m) => m.Face?.ExternalImageId === externalId);
+    if (!mine) {
+      return { status: 'MISMATCH', message: 'Live check failed: the face in the action photo does not match this account.' };
+    }
+  } catch (err: any) {
+    if (err?.name === 'InvalidParameterException') {
+      return fail('Live check failed: face not clear in the action photo.');
+    }
+    throw err;
+  }
+
+  return { status: 'MATCH', message: 'Liveness verified.' };
+}
+
 /* ------------------------------------------------------------------ *
  *  CLEANUP
  * ------------------------------------------------------------------ */

@@ -2,13 +2,40 @@ import type { Request, Response } from 'express';
 // @ts-ignore
 import { v2 as cloudinary } from 'cloudinary';
 import { AttendanceShiftLog, RegisteredEmployee } from '../models/AttendanceSchemas.js';
-import { verifyFace, dataUriToBuffer } from '../services/rekognition.js';
+import { verifyFace, dataUriToBuffer, checkLiveness, LIVENESS_CHALLENGES } from '../services/rekognition.js';
+import type { LivenessChallenge } from '../services/rekognition.js';
+import crypto from 'crypto';
 
 // Set FACE_VERIFICATION_ENABLED=false in .env to temporarily bypass face checks (e.g. during rollout).
 const FACE_VERIFICATION_ENABLED = process.env.FACE_VERIFICATION_ENABLED !== 'false';
 
+// Set LIVENESS_ENABLED=false in .env to bypass the live-person check (e.g. while old app builds are still in use).
+const LIVENESS_ENABLED = process.env.LIVENESS_ENABLED !== 'false';
+const CHALLENGE_TTL_MS = 90 * 1000;
+
+// One-time, short-lived challenges issued by the server (single server instance).
+const pendingChallenges = new Map<string, { employeeId: string; challenge: LivenessChallenge; exp: number }>();
+
+const normId = (id: any) => String(id ?? '').trim().toUpperCase();
+
+export const getLivenessChallenge = async (req: Request, res: Response): Promise<any> => {
+  const employeeId = normId(req.body?.employeeId);
+  if (!employeeId) {
+    return res.status(400).json({ success: false, message: 'Employee reference missing.' });
+  }
+
+  const nowMs = Date.now();
+  for (const [t, v] of pendingChallenges) if (v.exp < nowMs) pendingChallenges.delete(t);
+
+  const challenge = LIVENESS_CHALLENGES[crypto.randomInt(LIVENESS_CHALLENGES.length)] as LivenessChallenge;
+  const token = crypto.randomBytes(24).toString('hex');
+  pendingChallenges.set(token, { employeeId, challenge, exp: nowMs + CHALLENGE_TTL_MS });
+
+  return res.status(200).json({ success: true, token, challenge, expiresInSeconds: CHALLENGE_TTL_MS / 1000 });
+};
+
 export const punchClock = async (req: Request, res: Response): Promise<any> => {
-  const { employeeId, name, type, photoUri, locationAddress, isMocked } = req.body;
+  const { employeeId, name, type, photoUri, locationAddress, isMocked, livenessToken, livenessPhotoUri } = req.body;
 
   // 🛡️ REJECT FAKE GPS / MOCK LOCATION IMMEDIATELY
   if (isMocked === true) {
@@ -84,6 +111,29 @@ export const punchClock = async (req: Request, res: Response): Promise<any> => {
         });
       }
 
+      // 1) LIVE-PERSON CHECK (blocks printed photos / photos shown on another phone)
+      let issued: { employeeId: string; challenge: LivenessChallenge; exp: number } | undefined;
+      if (LIVENESS_ENABLED) {
+        issued = pendingChallenges.get(String(livenessToken || ''));
+        pendingChallenges.delete(String(livenessToken || '')); // one-time use
+
+        if (!issued || issued.exp < Date.now() || issued.employeeId !== normId(employee.employeeId)) {
+          return res.status(400).json({
+            success: false,
+            code: 'FACE_LIVENESS_REQUIRED',
+            message: 'Live check expired or missing. Please start again and follow the on-screen action.'
+          });
+        }
+        if (!livenessPhotoUri || !String(livenessPhotoUri).startsWith('data:image')) {
+          return res.status(400).json({
+            success: false,
+            code: 'FACE_LIVENESS_REQUIRED',
+            message: 'Action photo missing. Please start again and follow the on-screen action.'
+          });
+        }
+      }
+
+      // 2) IDENTITY CHECK on the straight photo
       const result = await verifyFace(employee.employeeId, dataUriToBuffer(String(photoUri)));
 
       if (result.status !== 'MATCH') {
@@ -94,6 +144,23 @@ export const punchClock = async (req: Request, res: Response): Promise<any> => {
         });
       }
       faceScore = result.similarity ?? null;
+
+      // 3) CHALLENGE CHECK on the action photo
+      if (LIVENESS_ENABLED && issued) {
+        const live = await checkLiveness(
+          employee.employeeId,
+          dataUriToBuffer(String(photoUri)),
+          dataUriToBuffer(String(livenessPhotoUri)),
+          issued.challenge
+        );
+        if (live.status !== 'MATCH') {
+          return res.status(422).json({
+            success: false,
+            code: live.status === 'MISMATCH' ? 'FACE_MISMATCH' : 'FACE_LIVENESS_FAILED',
+            message: live.message
+          });
+        }
+      }
     }
 
     // ------------------------------------------------------------------
