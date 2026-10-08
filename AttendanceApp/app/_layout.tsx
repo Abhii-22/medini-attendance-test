@@ -4,14 +4,21 @@ import { Stack, useRouter, useSegments } from "expo-router";
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-import { View, ActivityIndicator } from "react-native";
+import { View, ActivityIndicator, AppState } from "react-native";
 
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { AttendanceProvider } from "@/constants/AttendanceContext";
 
-export const API_BASE_URL = "https://attentdanceapi.techvruddhi.com/api";
-// export const API_BASE_URL = "http://192.168.1.10:5000/api";
+// export const API_BASE_URL = "https://attentdanceapi.techvruddhi.com/api";
+export const API_BASE_URL = "http://192.168.1.13:5000/api";
+
+const SESSION_KEYS = [
+  "@current_user",
+  "@is_admin",
+  "@admin_target_route",
+  "@session_key",
+];
 
 interface AuthContextType {
   isAuthenticated: boolean;
@@ -23,6 +30,7 @@ interface AuthContextType {
     user: any,
     isAdminMode: boolean,
     targetRoute?: "admin" | "adminView",
+    sessionKey?: string,
   ) => void;
 
   logout: () => void;
@@ -39,6 +47,46 @@ export function useAuth() {
 
   return context;
 }
+
+/*
+ * ASKS THE SERVER IF THE SAVED SESSION IS STILL VALID
+ * Returns false ONLY when the server clearly says the password changed
+ * (or the account no longer exists). Offline, timeout or server error
+ * returns true so the user is never logged out by accident.
+ */
+const isSessionStillValid = async (
+  user: any,
+  targetRoute: "admin" | "adminView" | null,
+  sessionKey: string | null,
+): Promise<boolean> => {
+  const loginMode =
+    targetRoute === "admin"
+      ? "ADMIN_PANEL"
+      : targetRoute === "adminView"
+        ? "ADMIN_VIEW"
+        : "EMPLOYEE";
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/auth/validate-session`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({ email: user?.email, loginMode, sessionKey }),
+    });
+
+    if (!response.ok) return true; // server problem: keep the session
+
+    const data = await response.json();
+    return data.valid !== false;
+  } catch {
+    return true; // offline or timeout: keep the session
+  } finally {
+    clearTimeout(timeoutId);
+  }
+};
 
 function InitialLayoutProtection() {
   const { isAuthenticated, currentUser, isAdmin, adminTargetRoute } = useAuth();
@@ -170,10 +218,12 @@ export default function RootLayout() {
     "admin" | "adminView" | null
   >(null);
 
+  const [sessionKey, setSessionKey] = useState<string | null>(null);
+
   const [isInitializing, setIsInitializing] = useState(true);
 
   /*
-   * LOAD SAVED SESSION
+   * LOAD SAVED SESSION (and check it against the server)
    */
   useEffect(() => {
     const loadStoredSession = async () => {
@@ -186,21 +236,35 @@ export default function RootLayout() {
           "@admin_target_route",
         );
 
+        const storedSessionKey = await AsyncStorage.getItem("@session_key");
+
         if (storedUser) {
           const parsedUser = JSON.parse(storedUser);
+
+          const route =
+            storedTargetRoute === "admin" || storedTargetRoute === "adminView"
+              ? storedTargetRoute
+              : null;
+
+          // Password changed since last login? Then do not restore the session.
+          const valid = await isSessionStillValid(
+            parsedUser,
+            route,
+            storedSessionKey,
+          );
+
+          if (!valid) {
+            await AsyncStorage.multiRemove(SESSION_KEYS);
+            return; // stays logged out and lands on the login page
+          }
 
           setCurrentUser(parsedUser);
 
           setIsAdmin(storedIsAdmin === "true");
 
-          if (
-            storedTargetRoute === "admin" ||
-            storedTargetRoute === "adminView"
-          ) {
-            setAdminTargetRoute(storedTargetRoute);
-          } else {
-            setAdminTargetRoute(null);
-          }
+          setAdminTargetRoute(route);
+
+          setSessionKey(storedSessionKey);
 
           setIsAuthenticated(true);
         }
@@ -208,11 +272,7 @@ export default function RootLayout() {
         console.error("Failed to load stored session:", error);
 
         // Clear corrupted session
-        await AsyncStorage.multiRemove([
-          "@current_user",
-          "@is_admin",
-          "@admin_target_route",
-        ]);
+        await AsyncStorage.multiRemove(SESSION_KEYS);
       } finally {
         setIsInitializing(false);
       }
@@ -228,6 +288,7 @@ export default function RootLayout() {
     user: any,
     isAdminMode: boolean,
     targetRoute?: "admin" | "adminView",
+    newSessionKey?: string,
   ) => {
     const resolvedRoute = targetRoute || (isAdminMode ? "admin" : null);
 
@@ -237,12 +298,18 @@ export default function RootLayout() {
 
     setAdminTargetRoute(resolvedRoute);
 
+    setSessionKey(newSessionKey || null);
+
     setIsAuthenticated(true);
 
     try {
       await AsyncStorage.setItem("@current_user", JSON.stringify(user));
 
       await AsyncStorage.setItem("@is_admin", String(isAdminMode));
+
+      if (newSessionKey) {
+        await AsyncStorage.setItem("@session_key", newSessionKey);
+      }
 
       if (resolvedRoute) {
         await AsyncStorage.setItem("@admin_target_route", resolvedRoute);
@@ -264,18 +331,42 @@ export default function RootLayout() {
 
     setAdminTargetRoute(null);
 
+    setSessionKey(null);
+
     setIsAuthenticated(false);
 
     try {
-      await AsyncStorage.multiRemove([
-        "@current_user",
-        "@is_admin",
-        "@admin_target_route",
-      ]);
+      await AsyncStorage.multiRemove(SESSION_KEYS);
     } catch (error) {
       console.error("Failed to clear session:", error);
     }
   };
+
+  /*
+   * RE-CHECK WHEN THE APP COMES BACK TO THE FOREGROUND
+   * Covers the case where the app stays open in the background
+   * while the password is changed.
+   * (Must stay ABOVE the early return below so hooks keep a stable order.)
+   */
+  useEffect(() => {
+    if (!isAuthenticated || !currentUser) return;
+
+    const subscription = AppState.addEventListener("change", async (state) => {
+      if (state !== "active") return;
+
+      const valid = await isSessionStillValid(
+        currentUser,
+        adminTargetRoute,
+        sessionKey,
+      );
+
+      if (!valid) {
+        logout();
+      }
+    });
+
+    return () => subscription.remove();
+  }, [isAuthenticated, currentUser, adminTargetRoute, sessionKey]);
 
   /*
    * INITIALIZATION
