@@ -7,12 +7,12 @@ import {
   SearchFacesByImageCommand,
   DeleteFacesCommand,
 } from '@aws-sdk/client-rekognition';
+import { Organization } from '../models/AttendanceSchemas.js';
 
 /* ------------------------------------------------------------------ *
  *  CONFIG (all values come from .env)
  * ------------------------------------------------------------------ */
 const REGION = process.env.AWS_REGION || 'ap-south-1';
-const COLLECTION_ID = process.env.REKOGNITION_COLLECTION_ID || 'employee-faces';
 // Minimum similarity (0-100) for a punch to be accepted. 90-95 is typical.
 export const MATCH_THRESHOLD = Number(process.env.FACE_MATCH_THRESHOLD || 92);
 // Two different employees must never share a face. Anything above this is a duplicate.
@@ -49,22 +49,37 @@ export function toExternalId(employeeId: string): string {
   return String(employeeId).trim().toUpperCase().replace(/[^a-zA-Z0-9_.\-:]/g, '_');
 }
 
-let collectionReady = false;
+/**
+ * MULTI-TENANT: every organization has its own Rekognition collection
+ * (stored on the Organization document), so faces never mix between companies.
+ */
+const collectionCache = new Map<string, string>();
 
-/** Creates the face collection the first time the server needs it. */
-export async function ensureCollection(): Promise<void> {
-  if (collectionReady) return;
+export async function collectionFor(orgId: string): Promise<string> {
+  const cached = collectionCache.get(orgId);
+  if (cached) return cached;
+  const org = await Organization.findById(orgId);
+  if (!org) throw new Error('Organization not found.');
+  collectionCache.set(orgId, org.faceCollectionId);
+  return org.faceCollectionId;
+}
+
+const readyCollections = new Set<string>();
+
+/** Creates the organization's face collection the first time the server needs it. */
+export async function ensureCollection(collectionId: string): Promise<void> {
+  if (readyCollections.has(collectionId)) return;
   try {
-    await client.send(new DescribeCollectionCommand({ CollectionId: COLLECTION_ID }));
+    await client.send(new DescribeCollectionCommand({ CollectionId: collectionId }));
   } catch (err: any) {
     if (err?.name === 'ResourceNotFoundException') {
-      await client.send(new CreateCollectionCommand({ CollectionId: COLLECTION_ID }));
-      console.log(`Rekognition collection "${COLLECTION_ID}" created in ${REGION}`);
+      await client.send(new CreateCollectionCommand({ CollectionId: collectionId }));
+      console.log(`Rekognition collection "${collectionId}" created in ${REGION}`);
     } else {
       throw err;
     }
   }
-  collectionReady = true;
+  readyCollections.add(collectionId);
 }
 
 /* ------------------------------------------------------------------ *
@@ -113,8 +128,9 @@ export interface EnrollResult {
  * Indexes one or more photos for an employee.
  * Every photo must pass the quality gate and must not belong to another employee.
  */
-export async function enrollFaces(employeeId: string, images: Buffer[]): Promise<EnrollResult> {
-  await ensureCollection();
+export async function enrollFaces(orgId: string, employeeId: string, images: Buffer[]): Promise<EnrollResult> {
+  const COLLECTION_ID = await collectionFor(orgId);
+  await ensureCollection(COLLECTION_ID);
   const externalId = toExternalId(employeeId);
   const faceIds: string[] = [];
 
@@ -168,7 +184,7 @@ export async function enrollFaces(employeeId: string, images: Buffer[]): Promise
     return { success: true, faceIds, message: `${faceIds.length} face photo(s) enrolled.` };
   } catch (err: any) {
     // Roll back anything indexed in this attempt so we never leave partial data behind.
-    if (faceIds.length > 0) await deleteFaces(faceIds).catch(() => undefined);
+    if (faceIds.length > 0) await deleteFaces(orgId, faceIds).catch(() => undefined);
     return { success: false, faceIds: [], message: err?.message || 'Face enrollment failed.' };
   }
 }
@@ -176,8 +192,9 @@ export async function enrollFaces(employeeId: string, images: Buffer[]): Promise
 /* ------------------------------------------------------------------ *
  *  VERIFICATION (every punch)
  * ------------------------------------------------------------------ */
-export async function verifyFace(employeeId: string, image: Buffer): Promise<FaceCheckResult> {
-  await ensureCollection();
+export async function verifyFace(orgId: string, employeeId: string, image: Buffer): Promise<FaceCheckResult> {
+  const COLLECTION_ID = await collectionFor(orgId);
+  await ensureCollection(COLLECTION_ID);
   const externalId = toExternalId(employeeId);
 
   const quality = await checkFaceQuality(image);
@@ -237,6 +254,7 @@ async function detectOneFace(image: Buffer) {
  * Both frames must be the logged-in employee, and the requested change must be visible.
  */
 export async function checkLiveness(
+  orgId: string,
   employeeId: string,
   frameA: Buffer,
   frameB: Buffer,
@@ -285,6 +303,7 @@ export async function checkLiveness(
   }
 
   // The challenge frame must ALSO be the logged-in employee (stops "photo first, live stranger second").
+  const COLLECTION_ID = await collectionFor(orgId);
   const externalId = toExternalId(employeeId);
   try {
     const res = await client.send(
@@ -312,8 +331,9 @@ export async function checkLiveness(
 /* ------------------------------------------------------------------ *
  *  CLEANUP
  * ------------------------------------------------------------------ */
-export async function deleteFaces(faceIds: string[]): Promise<void> {
+export async function deleteFaces(orgId: string, faceIds: string[]): Promise<void> {
   if (!faceIds || faceIds.length === 0) return;
-  await ensureCollection();
+  const COLLECTION_ID = await collectionFor(orgId);
+  await ensureCollection(COLLECTION_ID);
   await client.send(new DeleteFacesCommand({ CollectionId: COLLECTION_ID, FaceIds: faceIds }));
 }

@@ -10,15 +10,50 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { AttendanceProvider } from "@/constants/AttendanceContext";
 
-export const API_BASE_URL = "https://attentdanceapi.techvruddhi.com/api";
-// export const API_BASE_URL = "http://192.168.1.13:5000/api";
+// export const API_BASE_URL = "https://attentdanceapi.techvruddhi.com/api";
+export const API_BASE_URL = "http://192.168.1.8:5000/api";
 
 const SESSION_KEYS = [
   "@current_user",
   "@is_admin",
   "@admin_target_route",
   "@session_key",
+  "@org_token",
 ];
+
+/*
+ * MULTI-ORGANIZATION SUPPORT
+ * The server gives every logged-in user a signed "organization token".
+ * It is attached automatically to EVERY request that goes to our API
+ * (see the fetch wrapper below), so each screen only ever receives the
+ * data of the organization the user belongs to.
+ */
+let activeOrgToken: string | null = null;
+
+export const setActiveOrgToken = (token: string | null) => {
+  activeOrgToken = token;
+};
+
+export const getOrgToken = () => activeOrgToken;
+
+if (!(globalThis.fetch as any).__orgPatched) {
+  const originalFetch = globalThis.fetch;
+
+  const patchedFetch = ((input: any, init?: any) => {
+    const url: string = typeof input === "string" ? input : (input?.url ?? "");
+
+    if (activeOrgToken && url.startsWith(API_BASE_URL)) {
+      const headers = new Headers(init?.headers);
+      headers.set("x-org-token", activeOrgToken);
+      return originalFetch(input, { ...init, headers });
+    }
+
+    return originalFetch(input, init);
+  }) as typeof fetch;
+
+  (patchedFetch as any).__orgPatched = true;
+  globalThis.fetch = patchedFetch;
+}
 
 interface AuthContextType {
   isAuthenticated: boolean;
@@ -31,6 +66,7 @@ interface AuthContextType {
     isAdminMode: boolean,
     targetRoute?: "admin" | "adminView",
     sessionKey?: string,
+    orgToken?: string,
   ) => void;
 
   logout: () => void;
@@ -238,7 +274,16 @@ export default function RootLayout() {
 
         const storedSessionKey = await AsyncStorage.getItem("@session_key");
 
+        const storedOrgToken = await AsyncStorage.getItem("@org_token");
+
         if (storedUser) {
+          // Sessions saved before multi-organization support have no org token:
+          // ask the user to sign in once more so the token can be issued.
+          if (!storedOrgToken) {
+            await AsyncStorage.multiRemove(SESSION_KEYS);
+            return;
+          }
+
           const parsedUser = JSON.parse(storedUser);
 
           const route =
@@ -257,6 +302,8 @@ export default function RootLayout() {
             await AsyncStorage.multiRemove(SESSION_KEYS);
             return; // stays logged out and lands on the login page
           }
+
+          setActiveOrgToken(storedOrgToken);
 
           setCurrentUser(parsedUser);
 
@@ -289,8 +336,12 @@ export default function RootLayout() {
     isAdminMode: boolean,
     targetRoute?: "admin" | "adminView",
     newSessionKey?: string,
+    orgToken?: string,
   ) => {
     const resolvedRoute = targetRoute || (isAdminMode ? "admin" : null);
+
+    // Must be set BEFORE the screens mount and start fetching their data.
+    setActiveOrgToken(orgToken || null);
 
     setCurrentUser(user);
 
@@ -311,6 +362,10 @@ export default function RootLayout() {
         await AsyncStorage.setItem("@session_key", newSessionKey);
       }
 
+      if (orgToken) {
+        await AsyncStorage.setItem("@org_token", orgToken);
+      }
+
       if (resolvedRoute) {
         await AsyncStorage.setItem("@admin_target_route", resolvedRoute);
       } else {
@@ -325,6 +380,8 @@ export default function RootLayout() {
    * LOGOUT
    */
   const logout = async () => {
+    setActiveOrgToken(null);
+
     setCurrentUser(null);
 
     setIsAdmin(false);

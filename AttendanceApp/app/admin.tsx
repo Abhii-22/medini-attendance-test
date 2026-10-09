@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert, Linking, ActivityIndicator, Modal, Image, Platform } from 'react-native';
-import { useAuth, API_BASE_URL } from './_layout';
+import { useAuth, API_BASE_URL, getOrgToken } from './_layout';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 import * as XLSX from 'xlsx';
@@ -872,7 +872,7 @@ export default function AdminScreen() {
       document.body.removeChild(link);
     } else {
       const currentYearString = new Date().getFullYear().toString();
-      const downloadUrl = `${API_BASE_URL}/admin/download-attendance?employeeName=${encodeURIComponent(selectedEmpFilter)}&month=${selectedMonthFilter}&year=${currentYearString}&includeWorkingHours=true`;
+      const downloadUrl = `${API_BASE_URL}/admin/download-attendance?employeeName=${encodeURIComponent(selectedEmpFilter)}&month=${selectedMonthFilter}&year=${currentYearString}&includeWorkingHours=true&orgToken=${encodeURIComponent(getOrgToken() || '')}`;
       Linking.openURL(downloadUrl).catch(() => {
         Alert.alert('Download Error', 'Could not connect to spreadsheet download engine.');
       });

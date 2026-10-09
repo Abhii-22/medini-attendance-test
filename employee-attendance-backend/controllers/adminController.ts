@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import { RegisteredEmployee, AttendanceShiftLog, OfficeLocation, Holiday } from '../models/AttendanceSchemas.js';
 import { enrollFaces, deleteFaces, dataUriToBuffer } from '../services/rekognition.js';
+import { getOrgId } from '../middleware/requireOrg.js';
 
 export const registerEmployee = async (req: Request, res: Response): Promise<any> => {
   const { email, employeeId, name, designation, password, role, lunchBreakMinutes, monthlyCasualLeaveLimit } = req.body;
@@ -13,14 +14,17 @@ export const registerEmployee = async (req: Request, res: Response): Promise<any
   }
 
   try {
+    const orgId = getOrgId(req);
     const searchEmail = String(email).trim().toLowerCase();
     const searchId = String(employeeId).trim().toUpperCase();
     const targetRole = role || 'EMPLOYEE';
 
+    // Emails are unique across the whole system (login is by email).
     const existingUser = await RegisteredEmployee.findOne({ email: searchEmail });
 
     if (existingUser) {
-      if (targetRole === 'ADMIN_VIEW') {
+      // Only upgrade a profile that belongs to THIS organization.
+      if (targetRole === 'ADMIN_VIEW' && String(existingUser.organizationId) === orgId) {
         await RegisteredEmployee.updateOne(
           { _id: existingUser._id },
           { $addToSet: { role: 'ADMIN_VIEW' } }
@@ -36,7 +40,7 @@ export const registerEmployee = async (req: Request, res: Response): Promise<any
       return res.status(400).json({ success: false, message: 'Registration Denied: This email address is already assigned to an active profile.' });
     }
 
-    const existingId = await RegisteredEmployee.findOne({ employeeId: searchId });
+    const existingId = await RegisteredEmployee.findOne({ organizationId: orgId, employeeId: searchId });
     if (existingId) {
       return res.status(400).json({ success: false, message: 'Registration Denied: This Employee ID is already assigned to a staff profile.' });
     }
@@ -45,6 +49,7 @@ export const registerEmployee = async (req: Request, res: Response): Promise<any
     const parsedClLimit = monthlyCasualLeaveLimit !== undefined && monthlyCasualLeaveLimit !== null ? Number(monthlyCasualLeaveLimit) : 0;
 
     const newEmployee = new RegisteredEmployee({
+      organizationId: orgId,
       name: name.trim(),
       employeeId: searchId,
       designation: (designation || 'Staff').trim(), 
@@ -63,8 +68,8 @@ export const registerEmployee = async (req: Request, res: Response): Promise<any
   }
 };
 
-export const getEmployees = async (_req: Request, res: Response) => {
-  const list = await RegisteredEmployee.find().sort({ createdAt: -1 });
+export const getEmployees = async (req: Request, res: Response) => {
+  const list = await RegisteredEmployee.find({ organizationId: getOrgId(req) }).sort({ createdAt: -1 });
   res.status(200).json(list);
 };
 
@@ -99,7 +104,7 @@ export const updateEmployee = async (req: Request, res: Response): Promise<any> 
       updatePayload.role = [role];
     }
 
-    const updatedEmployee = await RegisteredEmployee.findByIdAndUpdate(_id, updatePayload, { new: true, runValidators: true });
+    const updatedEmployee = await RegisteredEmployee.findOneAndUpdate({ _id, organizationId: getOrgId(req) }, updatePayload, { new: true, runValidators: true });
 
     if (!updatedEmployee) {
       return res.status(404).json({ success: false, message: "Target workspace record could not be found." });
@@ -112,23 +117,24 @@ export const updateEmployee = async (req: Request, res: Response): Promise<any> 
 };
 
 export const deleteEmployee = async (req: Request, res: Response): Promise<any> => {
-  const targetMongoId = req.params.id;
+  const targetMongoId = String(req.params.id);
+  const orgId = getOrgId(req);
 
   try {
-    const employeeRecord = await RegisteredEmployee.findById(targetMongoId);
+    const employeeRecord = await RegisteredEmployee.findOne({ _id: targetMongoId, organizationId: orgId });
     if (!employeeRecord) {
       return res.status(404).json({ success: false, message: "Profile record not active in registry directory." });
     }
 
     // Remove this employee's faces from AWS Rekognition (non-blocking on failure)
     try {
-      await deleteFaces(employeeRecord.faceIds || []);
+      await deleteFaces(orgId, employeeRecord.faceIds || []);
     } catch (faceErr) {
       console.error('Face cleanup failed for', employeeRecord.employeeId, faceErr);
     }
 
-    await AttendanceShiftLog.deleteMany({ employeeIdReference: employeeRecord.employeeId });
-    await RegisteredEmployee.findByIdAndDelete(targetMongoId);
+    await AttendanceShiftLog.deleteMany({ organizationId: orgId, employeeIdReference: employeeRecord.employeeId });
+    await RegisteredEmployee.findOneAndDelete({ _id: targetMongoId, organizationId: orgId });
 
     return res.status(200).json({ success: true, message: "Profile data and chronological logs purged cleanly." });
   } catch (err) {
@@ -141,12 +147,13 @@ const TRACKING_START_MONTH = 0;
 
 export const getAttendanceSheet = async (req: Request, res: Response): Promise<any> => {
   try {
+    const orgId = getOrgId(req);
     const employeeName = req.query.employeeName ? String(req.query.employeeName) : 'ALL';
-    const filter = employeeName !== 'ALL' ? { employeeName } : {};
+    const filter = employeeName !== 'ALL' ? { organizationId: orgId, employeeName } : { organizationId: orgId };
     
     const sheets = await AttendanceShiftLog.find(filter).sort({ createdAt: -1 });
 
-    const allHolidays = await Holiday.find({});
+    const allHolidays = await Holiday.find({ organizationId: orgId });
     const holidaysMap = new Map<string, string>();
     allHolidays.forEach((h: any) => {
       if (h.date) {
@@ -155,7 +162,7 @@ export const getAttendanceSheet = async (req: Request, res: Response): Promise<a
       }
     });
 
-    const allEmployees = await RegisteredEmployee.find();
+    const allEmployees = await RegisteredEmployee.find({ organizationId: orgId });
     const targetEmployees = employeeName !== 'ALL' 
       ? allEmployees.filter(e => e.name.toLowerCase() === employeeName.toLowerCase())
       : allEmployees.filter(e => {
@@ -315,11 +322,12 @@ export const getAttendanceSheet = async (req: Request, res: Response): Promise<a
 
 export const downloadAttendance = async (req: Request, res: Response): Promise<any> => {
   try {
+    const orgId = getOrgId(req);
     const employeeName = req.query.employeeName ? String(req.query.employeeName) : 'ALL';
     const filterMonth = req.query.month ? String(req.query.month) : new Date().toLocaleString('en-US', { month: 'long' });
     const filterYear = req.query.year ? String(req.query.year) : new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata', year: 'numeric' });
 
-    const allEmployees = await RegisteredEmployee.find({});
+    const allEmployees = await RegisteredEmployee.find({ organizationId: orgId });
     const employeeLunchMap: { [key: string]: number } = {};
 
     allEmployees.forEach((emp: any) => {
@@ -331,7 +339,7 @@ export const downloadAttendance = async (req: Request, res: Response): Promise<a
       }
     });
 
-    const allHolidays = await Holiday.find({});
+    const allHolidays = await Holiday.find({ organizationId: orgId });
     const holidaysMap = new Map<string, string>();
     allHolidays.forEach((h: any) => {
       if (h.date) {
@@ -340,7 +348,7 @@ export const downloadAttendance = async (req: Request, res: Response): Promise<a
       }
     });
 
-    const queryFilter = employeeName !== 'ALL' ? { employeeName } : {};
+    const queryFilter = employeeName !== 'ALL' ? { organizationId: orgId, employeeName } : { organizationId: orgId };
     const records = await AttendanceShiftLog.find(queryFilter).sort({ date: -1 });
 
     const calculateServerWorkingHours = (inTime: string, outTime: string, lunchBreakMinutes: number = 0): string => {
@@ -515,9 +523,9 @@ export const downloadAttendance = async (req: Request, res: Response): Promise<a
   }
 };
 
-export const getOfficeLocations = async (_req: Request, res: Response) => {
+export const getOfficeLocations = async (req: Request, res: Response) => {
   try {
-    const locations = await OfficeLocation.find().sort({ createdAt: -1 });
+    const locations = await OfficeLocation.find({ organizationId: getOrgId(req) }).sort({ createdAt: -1 });
     return res.status(200).json(locations);
   } catch (err: any) {
     return res.status(500).json({ success: false, message: 'Failed to fetch locations', error: err.message });
@@ -533,6 +541,7 @@ export const addOfficeLocation = async (req: Request, res: Response): Promise<an
 
   try {
     const newLocation = new OfficeLocation({
+      organizationId: getOrgId(req),
       name: name.trim(),
       latitude: Number(latitude),
       longitude: Number(longitude),
@@ -547,7 +556,7 @@ export const addOfficeLocation = async (req: Request, res: Response): Promise<an
 };
 
 export const updateOfficeLocation = async (req: Request, res: Response): Promise<any> => {
-  const targetId = req.params.id;
+  const targetId = String(req.params.id);
   const { name, latitude, longitude, radiusInMeters } = req.body;
 
   if (!targetId) {
@@ -561,7 +570,7 @@ export const updateOfficeLocation = async (req: Request, res: Response): Promise
     if (longitude !== undefined) updatePayload.longitude = Number(longitude);
     if (radiusInMeters !== undefined) updatePayload.radiusInMeters = Number(radiusInMeters);
 
-    const updatedLocation = await OfficeLocation.findByIdAndUpdate(targetId, updatePayload, { new: true, runValidators: true });
+    const updatedLocation = await OfficeLocation.findOneAndUpdate({ _id: targetId, organizationId: getOrgId(req) }, updatePayload, { new: true, runValidators: true });
 
     if (!updatedLocation) {
       return res.status(404).json({ success: false, message: 'Office location record not found.' });
@@ -574,10 +583,10 @@ export const updateOfficeLocation = async (req: Request, res: Response): Promise
 };
 
 export const deleteOfficeLocation = async (req: Request, res: Response): Promise<any> => {
-  const targetId = req.params.id;
+  const targetId = String(req.params.id);
 
   try {
-    const deletedLocation = await OfficeLocation.findByIdAndDelete(targetId);
+    const deletedLocation = await OfficeLocation.findOneAndDelete({ _id: targetId, organizationId: getOrgId(req) });
     if (!deletedLocation) {
       return res.status(404).json({ success: false, message: 'Location record not found.' });
     }
@@ -587,9 +596,9 @@ export const deleteOfficeLocation = async (req: Request, res: Response): Promise
   }
 };
 
-export const getHolidays = async (_req: Request, res: Response) => {
+export const getHolidays = async (req: Request, res: Response) => {
   try {
-    const holidays = await Holiday.find().sort({ createdAt: -1 });
+    const holidays = await Holiday.find({ organizationId: getOrgId(req) }).sort({ createdAt: -1 });
     return res.status(200).json(holidays);
   } catch (err: any) {
     return res.status(500).json({ success: false, message: 'Failed to fetch holidays.', error: err.message });
@@ -605,6 +614,7 @@ export const addHoliday = async (req: Request, res: Response): Promise<any> => {
 
   try {
     const newHoliday = new Holiday({
+      organizationId: getOrgId(req),
       title: title.trim(),
       date: date.trim(),
       description: description ? description.trim() : ''
@@ -618,10 +628,10 @@ export const addHoliday = async (req: Request, res: Response): Promise<any> => {
 };
 
 export const deleteHoliday = async (req: Request, res: Response): Promise<any> => {
-  const targetId = req.params.id;
+  const targetId = String(req.params.id);
 
   try {
-    const deletedHoliday = await Holiday.findByIdAndDelete(targetId);
+    const deletedHoliday = await Holiday.findOneAndDelete({ _id: targetId, organizationId: getOrgId(req) });
     if (!deletedHoliday) {
       return res.status(404).json({ success: false, message: 'Holiday record not found.' });
     }
@@ -639,6 +649,7 @@ export const bulkAddHolidays = async (req: Request, res: Response): Promise<any>
   }
 
   try {
+    const orgId = getOrgId(req);
     let insertedCount = 0;
     let skippedCount = 0;
 
@@ -649,10 +660,11 @@ export const bulkAddHolidays = async (req: Request, res: Response): Promise<any>
       }
 
       const cleanDate = String(item.date).trim();
-      const existing = await Holiday.findOne({ date: cleanDate });
+      const existing = await Holiday.findOne({ organizationId: orgId, date: cleanDate });
 
       if (!existing) {
         await Holiday.create({
+          organizationId: orgId,
           title: String(item.title).trim(),
           date: cleanDate,
           description: item.description ? String(item.description).trim() : ''
@@ -688,13 +700,14 @@ export const enrollFace = async (req: Request, res: Response): Promise<any> => {
   }
 
   try {
-    const employee = await RegisteredEmployee.findById(_id);
+    const orgId = getOrgId(req);
+    const employee = await RegisteredEmployee.findOne({ _id, organizationId: orgId });
     if (!employee) {
       return res.status(404).json({ success: false, message: 'Employee record not found.' });
     }
 
     const buffers = photos.map((p: string) => dataUriToBuffer(String(p)));
-    const result = await enrollFaces(employee.employeeId, buffers);
+    const result = await enrollFaces(orgId, employee.employeeId, buffers);
 
     if (!result.success) {
       return res.status(422).json({ success: false, message: result.message });
@@ -707,7 +720,7 @@ export const enrollFace = async (req: Request, res: Response): Promise<any> => {
     await employee.save();
 
     if (oldFaceIds.length > 0) {
-      await deleteFaces(oldFaceIds).catch((e) => console.error('Old face cleanup failed:', e));
+      await deleteFaces(orgId, oldFaceIds).catch((e) => console.error('Old face cleanup failed:', e));
     }
 
     return res.status(200).json({
@@ -727,12 +740,13 @@ export const enrollFace = async (req: Request, res: Response): Promise<any> => {
  * ------------------------------------------------------------------ */
 export const removeFace = async (req: Request, res: Response): Promise<any> => {
   try {
-    const employee = await RegisteredEmployee.findById(req.params.id);
+    const orgId = getOrgId(req);
+    const employee = await RegisteredEmployee.findOne({ _id: String(req.params.id), organizationId: orgId });
     if (!employee) {
       return res.status(404).json({ success: false, message: 'Employee record not found.' });
     }
 
-    await deleteFaces(employee.faceIds || []);
+    await deleteFaces(orgId, employee.faceIds || []);
     employee.faceIds = [];
     employee.set('faceEnrolledAt', undefined);
     await employee.save();

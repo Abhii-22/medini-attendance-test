@@ -5,6 +5,7 @@ import { AttendanceShiftLog, RegisteredEmployee } from '../models/AttendanceSche
 import { verifyFace, dataUriToBuffer, checkLiveness, LIVENESS_CHALLENGES } from '../services/rekognition.js';
 import type { LivenessChallenge } from '../services/rekognition.js';
 import crypto from 'crypto';
+import { getOrgId } from '../middleware/requireOrg.js';
 
 // Set FACE_VERIFICATION_ENABLED=false in .env to temporarily bypass face checks (e.g. during rollout).
 const FACE_VERIFICATION_ENABLED = process.env.FACE_VERIFICATION_ENABLED !== 'false';
@@ -20,6 +21,7 @@ const normId = (id: any) => String(id ?? '').trim().toUpperCase();
 
 export const getLivenessChallenge = async (req: Request, res: Response): Promise<any> => {
   const employeeId = normId(req.body?.employeeId);
+  const orgId = getOrgId(req);
   if (!employeeId) {
     return res.status(400).json({ success: false, message: 'Employee reference missing.' });
   }
@@ -29,12 +31,13 @@ export const getLivenessChallenge = async (req: Request, res: Response): Promise
 
   const challenge = LIVENESS_CHALLENGES[crypto.randomInt(LIVENESS_CHALLENGES.length)] as LivenessChallenge;
   const token = crypto.randomBytes(24).toString('hex');
-  pendingChallenges.set(token, { employeeId, challenge, exp: nowMs + CHALLENGE_TTL_MS });
+  pendingChallenges.set(token, { employeeId: `${orgId}:${employeeId}`, challenge, exp: nowMs + CHALLENGE_TTL_MS });
 
   return res.status(200).json({ success: true, token, challenge, expiresInSeconds: CHALLENGE_TTL_MS / 1000 });
 };
 
 export const punchClock = async (req: Request, res: Response): Promise<any> => {
+  const orgId = getOrgId(req);
   const { employeeId, name, type, photoUri, locationAddress, isMocked, livenessToken, livenessPhotoUri } = req.body;
 
   // 🛡️ REJECT FAKE GPS / MOCK LOCATION IMMEDIATELY
@@ -51,7 +54,7 @@ export const punchClock = async (req: Request, res: Response): Promise<any> => {
   const formattedTime = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' });
 
   try {
-    let dayLog = await AttendanceShiftLog.findOne({ employeeIdReference: String(employeeId), date: formattedDate });
+    let dayLog = await AttendanceShiftLog.findOne({ organizationId: orgId, employeeIdReference: String(employeeId), date: formattedDate });
 
     // ------------------------------------------------------------------
     // ABSENT: no photo / face check needed
@@ -67,6 +70,7 @@ export const punchClock = async (req: Request, res: Response): Promise<any> => {
         await dayLog.save();
       } else {
         dayLog = new AttendanceShiftLog({
+          organizationId: orgId,
           employeeIdReference: employeeId,
           employeeName: name,
           date: formattedDate,
@@ -97,7 +101,7 @@ export const punchClock = async (req: Request, res: Response): Promise<any> => {
         });
       }
 
-      const employee = await RegisteredEmployee.findOne({ employeeId: String(employeeId).trim().toUpperCase() });
+      const employee = await RegisteredEmployee.findOne({ organizationId: orgId, employeeId: String(employeeId).trim().toUpperCase() });
 
       if (!employee) {
         return res.status(404).json({ success: false, message: 'Employee record not found.' });
@@ -117,7 +121,7 @@ export const punchClock = async (req: Request, res: Response): Promise<any> => {
         issued = pendingChallenges.get(String(livenessToken || ''));
         pendingChallenges.delete(String(livenessToken || '')); // one-time use
 
-        if (!issued || issued.exp < Date.now() || issued.employeeId !== normId(employee.employeeId)) {
+        if (!issued || issued.exp < Date.now() || issued.employeeId !== `${orgId}:${normId(employee.employeeId)}`) {
           return res.status(400).json({
             success: false,
             code: 'FACE_LIVENESS_REQUIRED',
@@ -134,7 +138,7 @@ export const punchClock = async (req: Request, res: Response): Promise<any> => {
       }
 
       // 2) IDENTITY CHECK on the straight photo
-      const result = await verifyFace(employee.employeeId, dataUriToBuffer(String(photoUri)));
+      const result = await verifyFace(orgId, employee.employeeId, dataUriToBuffer(String(photoUri)));
 
       if (result.status !== 'MATCH') {
         return res.status(422).json({
@@ -148,6 +152,7 @@ export const punchClock = async (req: Request, res: Response): Promise<any> => {
       // 3) CHALLENGE CHECK on the action photo
       if (LIVENESS_ENABLED && issued) {
         const live = await checkLiveness(
+          orgId,
           employee.employeeId,
           dataUriToBuffer(String(photoUri)),
           dataUriToBuffer(String(livenessPhotoUri)),
@@ -190,6 +195,7 @@ export const punchClock = async (req: Request, res: Response): Promise<any> => {
       await dayLog.save();
     } else {
       dayLog = new AttendanceShiftLog({
+        organizationId: orgId,
         employeeIdReference: employeeId,
         employeeName: name,
         date: formattedDate,
@@ -221,7 +227,7 @@ export const updateProfile = async (req: Request, res: Response): Promise<any> =
 
   try {
     const updatedEmployee = await RegisteredEmployee.findOneAndUpdate(
-      { employeeId: String(employeeId).toUpperCase() },
+      { organizationId: getOrgId(req), employeeId: String(employeeId).toUpperCase() },
       { name: name.trim(), designation: designation.trim(), email: email.trim().toLowerCase() },
       { new: true }
     );

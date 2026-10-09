@@ -3,7 +3,17 @@ import mongoose, { Schema, Document, Model } from 'mongoose';
 // ----------------------------------------------------
 // TypeScript Interfaces
 // ----------------------------------------------------
+export interface IOrganization extends Document {
+  name: string;
+  adminName: string;
+  email: string;
+  phone: string;
+  faceCollectionId: string; // each organization has its own AWS Rekognition collection
+  isLegacy?: boolean;
+}
+
 export interface IEmployeeProfile extends Document {
+  organizationId: string;
   name: string;
   employeeId: string;
   designation: string;
@@ -17,6 +27,7 @@ export interface IEmployeeProfile extends Document {
 }
 
 export interface IAttendanceShiftLog extends Document {
+  organizationId: string;
   employeeIdReference: string;
   employeeName: string;
   date: string;
@@ -32,6 +43,8 @@ export interface IAttendanceShiftLog extends Document {
 }
 
 export interface IAdminCredential extends Document {
+  organizationId: string;
+  phone?: string;
   name: string;
   employeeId: string;
   designation: string;
@@ -41,6 +54,7 @@ export interface IAdminCredential extends Document {
 }
 
 export interface IOfficeLocation extends Document {
+  organizationId: string;
   name: string;
   latitude: number;
   longitude: number;
@@ -48,17 +62,31 @@ export interface IOfficeLocation extends Document {
 }
 
 export interface IHoliday extends Document {
+  organizationId: string;
   title: string;
   date: string; // e.g., "August 15, 2026"
   description?: string;
 }
 
 // ----------------------------------------------------
+// 0. ORGANIZATION (TENANT) SCHEMA
+// ----------------------------------------------------
+const OrganizationSchema = new Schema<IOrganization>({
+  name: { type: String, required: true, trim: true },
+  adminName: { type: String, required: true, trim: true },
+  email: { type: String, required: true, unique: true, lowercase: true, trim: true },
+  phone: { type: String, default: '' },
+  faceCollectionId: { type: String, required: true },
+  isLegacy: { type: Boolean, default: false }
+}, { timestamps: true });
+
+// ----------------------------------------------------
 // 1. CORE EMPLOYEE REGISTRY SCHEMA
 // ----------------------------------------------------
 const EmployeeProfileSchema = new Schema<IEmployeeProfile>({
+  organizationId: { type: String, required: true, index: true },
   name: { type: String, required: true },
-  employeeId: { type: String, required: true, unique: true, uppercase: true, trim: true },
+  employeeId: { type: String, required: true, uppercase: true, trim: true },
   designation: { type: String, required: true },
   email: { type: String, required: true, unique: true, lowercase: true, trim: true },
   password: { type: String, required: true },
@@ -68,11 +96,14 @@ const EmployeeProfileSchema = new Schema<IEmployeeProfile>({
   faceIds: { type: [String], default: [] },
   faceEnrolledAt: { type: Date }
 }, { timestamps: true });
+// Employee IDs only need to be unique INSIDE one organization.
+EmployeeProfileSchema.index({ organizationId: 1, employeeId: 1 }, { unique: true });
 
 // ----------------------------------------------------
 // 2. CHRONOLOGICAL ATTENDANCE SHIFT LOG SCHEMA
 // ----------------------------------------------------
 const ShiftLogSchema = new Schema<IAttendanceShiftLog>({
+  organizationId: { type: String, required: true, index: true },
   employeeIdReference: { type: String, required: true },
   employeeName: { type: String, required: true },
   date: { type: String, required: true },       
@@ -91,18 +122,22 @@ const ShiftLogSchema = new Schema<IAttendanceShiftLog>({
 // 3. MASTER ADMIN CREDENTIAL SCHEMA
 // ----------------------------------------------------
 const AdminCredentialSchema = new Schema<IAdminCredential>({
+  organizationId: { type: String, required: true, index: true },
   name: { type: String, required: true },
-  employeeId: { type: String, required: true, unique: true, uppercase: true, trim: true },
+  employeeId: { type: String, required: true, uppercase: true, trim: true },
   designation: { type: String, required: true },
   email: { type: String, required: true, unique: true, lowercase: true, trim: true },
   password: { type: String, required: true },
+  phone: { type: String, default: '' },
   role: { type: String, default: 'MASTER' }
 }, { timestamps: true });
+AdminCredentialSchema.index({ organizationId: 1, employeeId: 1 }, { unique: true });
 
 // ----------------------------------------------------
 // 4. OFFICE LOCATION SCHEMA
 // ----------------------------------------------------
 const OfficeLocationSchema = new Schema<IOfficeLocation>({
+  organizationId: { type: String, required: true, index: true },
   name: { type: String, required: true },
   latitude: { type: Number, required: true },
   longitude: { type: Number, required: true },
@@ -113,14 +148,20 @@ const OfficeLocationSchema = new Schema<IOfficeLocation>({
 // 5. HOLIDAY SCHEMA
 // ----------------------------------------------------
 const HolidaySchema = new Schema<IHoliday>({
+  organizationId: { type: String, required: true, index: true },
   title: { type: String, required: true },
-  date: { type: String, required: true, unique: true },
+  date: { type: String, required: true },
   description: { type: String, default: '' }
 }, { timestamps: true });
+// The same holiday date may exist in different organizations.
+HolidaySchema.index({ organizationId: 1, date: 1 }, { unique: true });
 
 // ----------------------------------------------------
 // MODEL EXPORTS
 // ----------------------------------------------------
+export const Organization = (mongoose.models.Organization ||
+  mongoose.model<IOrganization>('Organization', OrganizationSchema)) as Model<IOrganization>;
+
 export const RegisteredEmployee = (mongoose.models.RegisteredEmployee || 
   mongoose.model<IEmployeeProfile>('RegisteredEmployee', EmployeeProfileSchema)) as Model<IEmployeeProfile>;
 

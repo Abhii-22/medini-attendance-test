@@ -40,7 +40,17 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [focusedField, setFocusedField] = useState<'email' | 'password' | null>(null);
+  const [focusedField, setFocusedField] = useState<string | null>(null);
+
+  // ORGANIZATION REGISTRATION
+  const [isRegisterMode, setIsRegisterMode] = useState(false);
+  const [orgName, setOrgName] = useState('');
+  const [adminName, setAdminName] = useState('');
+  const [regEmail, setRegEmail] = useState('');
+  const [regPhone, setRegPhone] = useState('');
+  const [regPassword, setRegPassword] = useState('');
+  const [regConfirm, setRegConfirm] = useState('');
+  const [showRegPassword, setShowRegPassword] = useState(false);
   const [tabRowWidth, setTabRowWidth] = useState(0);
 
   /* ------------------------------ ANIMATION VALUES ------------------------------ */
@@ -183,11 +193,11 @@ export default function LoginScreen() {
 
         // result.sessionKey lets the app detect later if the password was changed
         if (loginMode === 'ADMIN_VIEW') {
-          login(result.user, result.isAdmin, 'adminView', result.sessionKey);
+          login(result.user, result.isAdmin, 'adminView', result.sessionKey, result.orgToken);
         } else if (loginMode === 'ADMIN_PANEL') {
-          login(result.user, result.isAdmin, 'admin', result.sessionKey);
+          login(result.user, result.isAdmin, 'admin', result.sessionKey, result.orgToken);
         } else {
-          login(result.user, result.isAdmin, undefined, result.sessionKey);
+          login(result.user, result.isAdmin, undefined, result.sessionKey, result.orgToken);
         }
 
         setEmail('');
@@ -203,6 +213,120 @@ export default function LoginScreen() {
       setIsLoading(false);
     }
   };
+
+  /* ------------------------------ ORGANIZATION REGISTRATION ------------------------------ */
+  const openRegister = () => {
+    selectMode('ADMIN_PANEL'); // registration creates an Admin Panel account
+    setIsRegisterMode(true);
+  };
+
+  const handleRegisterOrganization = async () => {
+    const payload = {
+      organizationName: orgName.trim(),
+      adminName: adminName.trim(),
+      email: regEmail.trim(),
+      phone: regPhone.trim(),
+      password: regPassword.trim(),
+      confirmPassword: regConfirm.trim(),
+    };
+
+    if (!payload.organizationName || !payload.adminName || !payload.email || !payload.phone || !payload.password || !payload.confirmPassword) {
+      runShake();
+      Alert.alert('Incomplete Fields', 'Please fill in every field to register your organization.');
+      return;
+    }
+    if (!/^\S+@\S+\.\S+$/.test(payload.email)) {
+      runShake();
+      Alert.alert('Invalid Email', 'Please enter a valid email address.');
+      return;
+    }
+    if (!/^[+]?[0-9\s-]{7,15}$/.test(payload.phone)) {
+      runShake();
+      Alert.alert('Invalid Phone Number', 'Please enter a valid phone number.');
+      return;
+    }
+    if (payload.password.length < 6) {
+      runShake();
+      Alert.alert('Weak Password', 'Password must be at least 6 characters.');
+      return;
+    }
+    if (payload.password !== payload.confirmPassword) {
+      runShake();
+      Alert.alert('Password Mismatch', 'Password and confirm password do not match.');
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/register-organization`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      const result = await response.json();
+
+      if (response.ok && result.success) {
+        // Registered: sign the new admin straight into their own Admin Panel.
+        login(result.user, true, 'admin', result.sessionKey, result.orgToken);
+
+        setOrgName('');
+        setAdminName('');
+        setRegEmail('');
+        setRegPhone('');
+        setRegPassword('');
+        setRegConfirm('');
+        setIsRegisterMode(false);
+      } else {
+        runShake();
+        Alert.alert('Registration Failed', result.message || 'Could not register the organization.');
+      }
+    } catch (error) {
+      console.error('Register Network Error:', error);
+      Alert.alert('Connection Error', 'Could not reach the attendance server.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const renderRegField = (
+    key: string,
+    label: string,
+    icon: keyof typeof Ionicons.glyphMap,
+    value: string,
+    onChange: (v: string) => void,
+    placeholder: string,
+    extra: any = {},
+  ) => (
+    <>
+      <Text style={styles.inputLabel}>{label}</Text>
+      <Animated.View style={[styles.inputShell, { borderColor: focusedField === key ? accent : '#E3EAF5' }]}>
+        <Ionicons name={icon} size={18} color="#8A97B1" style={styles.inputIcon} />
+        <TextInput
+          style={styles.inputField}
+          value={value}
+          onChangeText={onChange}
+          placeholder={placeholder}
+          placeholderTextColor="#A8B3C7"
+          editable={!isLoading}
+          onFocus={() => setFocusedField(key)}
+          onBlur={() => setFocusedField(null)}
+          {...extra}
+        />
+        {extra.secureTextEntry !== undefined && key === 'regPassword' && (
+          <TouchableOpacity
+            style={styles.eyeBtn}
+            onPress={() => setShowRegPassword(!showRegPassword)}
+            disabled={isLoading}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Ionicons name={showRegPassword ? 'eye-outline' : 'eye-off-outline'} size={20} color="#8A97B1" />
+          </TouchableOpacity>
+        )}
+      </Animated.View>
+    </>
+  );
 
   /* ------------------------------ UI ------------------------------ */
   return (
@@ -260,6 +384,7 @@ export default function LoginScreen() {
         </Animated.View>
 
         {/* ROLE SWITCH */}
+        {!isRegisterMode && (
         <Animated.View style={rise(tabsIn, 24)}>
           <View
             style={styles.tabToggleRow}
@@ -290,8 +415,52 @@ export default function LoginScreen() {
             })}
           </View>
         </Animated.View>
+        )}
 
         {/* FORM CARD */}
+        {isRegisterMode ? (
+          <Animated.View
+            style={[
+              styles.authFormCard,
+              rise(cardIn, 36),
+              { transform: [
+                  { translateY: cardIn.interpolate({ inputRange: [0, 1], outputRange: [36, 0] }) },
+                  { translateX: shake.interpolate({ inputRange: [-1, 1], outputRange: [-8, 8] }) },
+              ] },
+            ]}
+          >
+            <Text style={styles.formContextTitle}>Register Your Organization</Text>
+            <Text style={styles.regHint}>
+              This creates your own private workspace. You become its Admin Panel owner and can then add employees and Admin View accounts.
+            </Text>
+
+            {renderRegField('orgName', 'Organization name', 'business-outline', orgName, setOrgName, 'Your company name', { autoCapitalize: 'words' })}
+            {renderRegField('adminName', 'Admin name', 'person-outline', adminName, setAdminName, 'Full name', { autoCapitalize: 'words' })}
+            {renderRegField('regEmail', 'Email', 'mail-outline', regEmail, setRegEmail, 'admin@yourcompany.com', { keyboardType: 'email-address', autoCapitalize: 'none' })}
+            {renderRegField('regPhone', 'Phone number', 'call-outline', regPhone, setRegPhone, '+91 98765 43210', { keyboardType: 'phone-pad' })}
+            {renderRegField('regPassword', 'Password', 'lock-closed-outline', regPassword, setRegPassword, 'At least 6 characters', { secureTextEntry: !showRegPassword, autoCapitalize: 'none' })}
+            {renderRegField('regConfirm', 'Confirm password', 'lock-closed-outline', regConfirm, setRegConfirm, 'Re-enter password', { secureTextEntry: !showRegPassword, autoCapitalize: 'none' })}
+
+            <Animated.View style={{ transform: [{ scale: pressScale }], marginTop: 26 }}>
+              <TouchableOpacity
+                activeOpacity={0.9}
+                onPress={handleRegisterOrganization}
+                onPressIn={() => Animated.spring(pressScale, { toValue: 0.96, useNativeDriver: true }).start()}
+                onPressOut={() => Animated.spring(pressScale, { toValue: 1, friction: 4, useNativeDriver: true }).start()}
+                disabled={isLoading}
+              >
+                <Animated.View style={[styles.primaryAuthBtn, { backgroundColor: accent }, isLoading && { opacity: 0.7 }]}>
+                  {isLoading && <ActivityIndicator color="#FFFFFF" size="small" style={{ marginRight: 10 }} />}
+                  <Text style={styles.primaryAuthBtnText}>{isLoading ? 'Registering...' : 'Register Organization'}</Text>
+                </Animated.View>
+              </TouchableOpacity>
+            </Animated.View>
+
+            <TouchableOpacity style={styles.switchLinkRow} onPress={() => setIsRegisterMode(false)} disabled={isLoading}>
+              <Text style={styles.switchLinkText}>Already registered? <Text style={[styles.switchLinkStrong, { color: MODES.ADMIN_PANEL.color }]}>Sign in</Text></Text>
+            </TouchableOpacity>
+          </Animated.View>
+        ) : (
         <Animated.View
           style={[
             styles.authFormCard,
@@ -374,7 +543,14 @@ export default function LoginScreen() {
               </Animated.View>
             </TouchableOpacity>
           </Animated.View>
+
+          <TouchableOpacity style={styles.switchLinkRow} onPress={openRegister} disabled={isLoading}>
+            <Text style={styles.switchLinkText}>
+              New organization? <Text style={[styles.switchLinkStrong, { color: MODES.ADMIN_PANEL.color }]}>Register here</Text>
+            </Text>
+          </TouchableOpacity>
         </Animated.View>
+        )}
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -473,4 +649,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   primaryAuthBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
+
+  regHint: { fontSize: 12, color: '#7A88A6', textAlign: 'center', lineHeight: 17, marginBottom: 2 },
+  switchLinkRow: { marginTop: 18, alignItems: 'center', paddingVertical: 6 },
+  switchLinkText: { fontSize: 13, color: '#62708C', fontWeight: '500' },
+  switchLinkStrong: { fontWeight: '800' },
 });
